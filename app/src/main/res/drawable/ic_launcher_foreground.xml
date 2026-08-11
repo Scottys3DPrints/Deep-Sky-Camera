@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Bright central star, drawn inside the 72dp safe zone of the adaptive icon. -->
+    <path
+        android:fillColor="#EAF2FF"
+        android:pathData="M54,28 L58.5,49.5 L80,54 L58.5,58.5 L54,80 L49.5,58.5 L28,54 L49.5,49.5 Z" />
+
+    <!-- Companions, so the icon reads as a sky rather than a single sparkle. -->
+    <path
+        android:fillColor="#9DBBE8"
+        android:pathData="M76,32 L78,39 L85,41 L78,43 L76,50 L74,43 L67,41 L74,39 Z" />
+    <path
+        android:fillColor="#7FA3D8"
+        android:pathData="M34,68 L35.5,73 L40.5,74.5 L35.5,76 L34,81 L32.5,76 L27.5,74.5 L32.5,73 Z" />
+</vector>

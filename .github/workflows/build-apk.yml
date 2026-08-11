@@ -1,0 +1,205 @@
+name: Build APK
+
+# Deep Sky Camera is not distributed through a store, so this workflow *is* the
+# distribution channel. Every push builds an installable APK as a downloadable
+# artifact; every tag also publishes a Release, which is both the link you open on
+# the phone and the address the in-app updater polls forever after.
+
+on:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # CapturePlannerTest is the guard that matters here: it pins the exposure
+      # planner against the real numbers this phone's sensor reports. A planner
+      # bug does not crash — it quietly produces a dark or streaked photo, and you
+      # only find out standing in a field at midnight.
+      - name: Run tests
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+
+  apk:
+    name: Build installable APK
+    runs-on: ubuntu-latest
+    needs: tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Signing is optional so the build never hard-fails, but it is the
+      # difference between an APK that can update your phone and one that cannot.
+      # Without the secrets, Gradle falls back to the debug key, which every
+      # runner generates afresh — two such builds cannot update each other.
+      - name: Restore signing key
+        id: signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.DSC_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/deepsky.jks"
+            echo "keystore=$RUNNER_TEMP/deepsky.jks" >> "$GITHUB_OUTPUT"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No signing key configured; falling back to the debug key." >&2
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The version code must climb monotonically or Android refuses the update as
+      # a downgrade. The run number does that for free and never repeats;
+      # app/build.gradle.kts offsets it clear of any hand-built local APK.
+      - name: Work out the version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION_NAME="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION_NAME="0.0.0-$(echo "$GITHUB_SHA" | cut -c1-7)"
+          fi
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "code=$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION_NAME (run $GITHUB_RUN_NUMBER)"
+
+      - name: Build release APK
+        env:
+          DSC_KEYSTORE_FILE: ${{ steps.signing.outputs.keystore }}
+          DSC_KEYSTORE_PASSWORD: ${{ secrets.DSC_KEYSTORE_PASSWORD }}
+          DSC_KEY_ALIAS: ${{ secrets.DSC_KEY_ALIAS }}
+          DSC_KEY_PASSWORD: ${{ secrets.DSC_KEY_PASSWORD }}
+          DSC_VERSION_NAME: ${{ steps.version.outputs.name }}
+          DSC_VERSION_CODE: ${{ steps.version.outputs.code }}
+          DSC_UPDATE_URL: https://github.com/${{ github.repository }}/releases/latest/download/deepsky-update.json
+        run: ./gradlew :app:assembleRelease
+
+      - name: Collect the APK
+        id: naming
+        run: |
+          VERSION="${{ steps.version.outputs.name }}"
+          mkdir -p dist
+
+          RELEASE_APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          if [ -z "$RELEASE_APK" ]; then
+            echo "No release APK produced." >&2
+            exit 1
+          fi
+          cp "$RELEASE_APK" "dist/deepsky-${VERSION}.apk"
+          echo "release=dist/deepsky-${VERSION}.apk" >> "$GITHUB_OUTPUT"
+          ls -lh dist
+
+      # Prints the certificate the APK was signed with.
+      #
+      # Android only installs an update over an app signed with the *same* key.
+      # Compare this fingerprint across runs: once the signing secrets are set it
+      # should be identical every time, and identical to the key on the laptop.
+      # If it ever changes, updates will be refused and the only way out is an
+      # uninstall.
+      - name: Report signing identity
+        run: |
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -r | head -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found; skipping." && exit 0
+          fi
+          echo "Signed with (release):"
+          "$APKSIGNER" verify --print-certs "${{ steps.naming.outputs.release }}" \
+            | grep -i "SHA-256 digest" || echo "  could not read certificate"
+          if [ "${{ steps.signing.outputs.signed }}" = "false" ]; then
+            echo ""
+            echo "::warning::No signing key configured. This build uses a throwaway debug key"
+            echo "::warning::that differs on every run, so it CANNOT install as an update over"
+            echo "::warning::any other build. Set the DSC_KEYSTORE_* secrets."
+          fi
+
+      # The manifest the in-app updater reads. Attached to the release under a
+      # fixed name so that .../releases/latest/download/deepsky-update.json is a
+      # stable address that always resolves to the newest build — the phone never
+      # needs reconfiguring, no matter how many versions ship.
+      - name: Write the update manifest
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${{ steps.version.outputs.name }}"
+          APK="${{ steps.naming.outputs.release }}"
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          # Must match the versionCode Gradle actually stamped in — see the offset
+          # in app/build.gradle.kts. A mismatch would make the app either miss the
+          # update or offer one it already has.
+          CODE=$(( ${{ steps.version.outputs.code }} + 1000 ))
+
+          cat > dist/deepsky-update.json <<EOF
+          {
+            "versionCode": $CODE,
+            "versionName": "$VERSION",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${VERSION}/deepsky-${VERSION}.apk",
+            "sha256": "$SHA",
+            "notes": "Deep Sky Camera $VERSION",
+            "releasedAt": "$(date -u +%Y-%m-%d)"
+          }
+          EOF
+          cat dist/deepsky-update.json
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepsky-apk
+          path: dist/*
+          if-no-files-found: error
+
+      # A tag turns the build into a Release: a stable URL to open in the phone's
+      # browser and tap to install, and the address the in-app updater polls.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.apk
+            dist/deepsky-update.json
+          body: |
+            Install directly on the phone — no store and no account needed.
+
+            1. Open this page on the phone and tap the `.apk` below.
+            2. Allow your browser to install unknown apps when prompted.
+            3. Open Deep Sky Camera and allow the camera.
+
+            **Already have it installed?** Don't use this page — open the app and
+            go to **Settings → Check for updates**. It installs over the top and
+            keeps your settings.

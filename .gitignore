@@ -1,0 +1,20 @@
+*.iml
+.gradle/
+local.properties
+.idea/
+.DS_Store
+build/
+captures/
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+
+# Signing material. Losing these means you can never update an installed copy
+# in place — back them up somewhere safe and out of version control.
+keystore.properties
+*.jks
+*.keystore
+
+# Locally built release artifacts (see the release runbook)
+dist/

@@ -1,0 +1,12 @@
+# The Linux CI runner executes gradlew directly. If Git ever handed it CRLF line
+# endings the shebang would break with "bad interpreter" and every build would
+# fail before it started — so pin it, and the wrapper it reads, to LF.
+* text=auto eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+
+*.jar binary
+*.apk binary
+*.jks binary
+*.keystore binary
+*.png binary
