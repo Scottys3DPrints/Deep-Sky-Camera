@@ -270,11 +270,19 @@ class CameraController(private val context: Context) {
             // watches while it runs really is what is being stacked.
             preview?.let { addTarget(it) }
 
-            // Full manual. Every automatic system that could change its mind
-            // between frames is switched off or locked.
-            set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_OFF)
+            // Manual exposure and focus, but 3A is left switched on overall and
+            // white balance merely *locked*.
+            //
+            // The tempting move is CONTROL_MODE_OFF, which disables auto exposure,
+            // focus and white balance in one line. It also disables the HAL's
+            // colour correction, leaving the app responsible for supplying its own
+            // transform matrix and gains — and with no matrix supplied, frames come
+            // back with a heavy green cast. Locking AWB instead gets what actually
+            // matters here, which is that colour cannot drift between frames that
+            // are about to be summed together.
+            set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
             set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
-            set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_OFF)
+            set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_AUTO)
             set(CaptureRequest.CONTROL_AWB_LOCK, true)
             set(CaptureRequest.CONTROL_AF_MODE, CameraMetadata.CONTROL_AF_MODE_OFF)
 

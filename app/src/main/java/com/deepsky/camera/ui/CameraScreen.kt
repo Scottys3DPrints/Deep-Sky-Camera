@@ -229,7 +229,12 @@ private fun ControlPanel(
         PlanSummary(state.plan)
 
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                // Scrollable rather than wrapped: four chips fit on most phones but
+                // not on the narrowest, and a chip that silently falls off the edge
+                // is a mode the user cannot reach.
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
         ) {
             CaptureMode.entries.forEach { mode ->
@@ -294,8 +299,14 @@ private fun PlanSummary(plan: CapturePlan?) {
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        val total = when {
+            plan.mode == CaptureMode.SINGLE -> ""
+            plan.mode.isIndefinite -> "  ·  until you stop"
+            else -> "  ·  %.0f s total".format(plan.plannedIntegrationMs / 1000.0)
+        }
+
         Text(
-            text = plan.summary(),
+            text = plan.summary() + total,
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )

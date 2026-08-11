@@ -49,10 +49,12 @@ fun CameraPreview(
                     ) = Unit
 
                     override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                        // Release our Surface wrapper and let TextureView reclaim
+                        // the SurfaceTexture. Coming back to the app then produces
+                        // a genuinely new surface, which is what re-triggers
+                        // onSurfaceReady and reopens the camera.
                         holder.release()
-                        // Returning false keeps the SurfaceTexture alive for us to
-                        // release ourselves, after the camera has let go of it.
-                        return false
+                        return true
                     }
 
                     override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit

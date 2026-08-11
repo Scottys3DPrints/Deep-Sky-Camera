@@ -79,6 +79,21 @@ private fun AppRoot() {
         }
     }
 
+    // Hand the camera back whenever the app leaves the foreground. Holding it
+    // open would lock every other camera app out of the sensor, and Android may
+    // take it away regardless — better to release deliberately and reopen on a
+    // fresh surface than to come back to a dead session.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                viewModel.releaseCamera()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     when {
         !hasCameraPermission -> PermissionWall(
             onGrant = { requestPermission.launch(Manifest.permission.CAMERA) },
