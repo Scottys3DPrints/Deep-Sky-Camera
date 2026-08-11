@@ -78,7 +78,15 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.DSC_KEYSTORE_BASE64 }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/deepsky.jks"
+            # Whitespace is stripped before decoding. A secret uploaded from a
+            # Windows shell arrives with a trailing carriage return, and GNU
+            # base64 rejects the whole input for it — which fails here, opaquely,
+            # long before anything reaches the signing step.
+            printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n \t' | base64 -d > "$RUNNER_TEMP/deepsky.jks"
+            if [ ! -s "$RUNNER_TEMP/deepsky.jks" ]; then
+              echo "::error::DSC_KEYSTORE_BASE64 did not decode to a keystore."
+              exit 1
+            fi
             echo "keystore=$RUNNER_TEMP/deepsky.jks" >> "$GITHUB_OUTPUT"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
