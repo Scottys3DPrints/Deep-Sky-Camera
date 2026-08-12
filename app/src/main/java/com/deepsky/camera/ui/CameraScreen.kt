@@ -387,7 +387,11 @@ private fun ControlDeck(
             )
         }
 
-        PlanReadout(state.plan)
+        when (state.phase) {
+            Phase.Metering -> StatusLine("Reading the sky")
+            Phase.Saving -> StatusLine("Building the photograph")
+            else -> PlanReadout(state.plan)
+        }
 
         ModeSelector(
             selected = state.mode,
@@ -468,6 +472,19 @@ private fun PlanReadout(plan: CapturePlan?) {
             color = Ink.TextTertiary,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/**
+ * Occupies the plan's slot while the app is busy, so the deck neither jumps in
+ * height nor leaves a stale plan on screen implying nothing is happening.
+ */
+@Composable
+private fun StatusLine(text: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(text, style = Type.Readout, color = Ink.Accent)
+        Spacer(Modifier.height(5.dp))
+        Text("", style = Type.Caption)
     }
 }
 

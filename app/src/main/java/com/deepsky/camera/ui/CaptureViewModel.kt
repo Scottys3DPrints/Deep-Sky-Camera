@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -90,7 +91,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             settingsStore.settings.collect { settings ->
                 controller.focusDiopters = settings.focusDiopters
-                _state.value = _state.value.copy(settings = settings)
+                _state.update { it.copy(settings = settings) }
                 replan()
             }
         }
@@ -114,9 +115,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 CameraCapabilities.discover(getApplication())
             }
             if (cameras.isEmpty()) {
-                _state.value = _state.value.copy(
-                    message = "No camera on this phone can be reached.",
-                )
+                _state.update { it.copy(message = "No camera on this phone can be reached.") }
                 return@launch
             }
 
@@ -125,7 +124,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                 ?: cameras.firstOrNull { it.supportsManual }
                 ?: cameras.first()
 
-            _state.value = _state.value.copy(cameras = cameras, selected = chosen)
+            _state.update { it.copy(cameras = cameras, selected = chosen) }
             replan()
         }
     }
@@ -135,7 +134,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         val camera = _state.value.selected ?: return
 
         viewModelScope.launch {
-            _state.value = _state.value.copy(phase = Phase.Opening)
+            _state.update { it.copy(phase = Phase.Opening) }
             openAndMeter(camera, target)
         }
     }
@@ -146,16 +145,18 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         surface = target
         val opened = runCatching { controller.open(camera, target) }
         if (opened.isFailure) {
-            _state.value = _state.value.copy(
-                phase = Phase.Idle,
-                message = opened.exceptionOrNull()?.message ?: "Could not open the camera",
-            )
+            _state.update {
+                it.copy(
+                    phase = Phase.Idle,
+                    message = opened.exceptionOrNull()?.message ?: "Could not open the camera",
+                )
+            }
             return
         }
 
-        _state.value = _state.value.copy(phase = Phase.Metering)
+        _state.update { it.copy(phase = Phase.Metering) }
         metering = controller.meter()
-        _state.value = _state.value.copy(phase = Phase.Ready)
+        _state.update { it.copy(phase = Phase.Ready) }
         replan()
     }
 
@@ -165,14 +166,14 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             settingsStore.setCameraId(camera.id)
-            _state.value = _state.value.copy(selected = camera, phase = Phase.Opening)
+            _state.update { it.copy(selected = camera, phase = Phase.Opening) }
             openAndMeter(camera, target)
         }
     }
 
     fun selectMode(mode: CaptureMode) {
         if (_state.value.isCapturing) return
-        _state.value = _state.value.copy(mode = mode)
+        _state.update { it.copy(mode = mode) }
         replan()
     }
 
@@ -185,7 +186,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             metering = metering,
             evOffset = _state.value.settings.evOffset,
         )
-        _state.value = _state.value.copy(plan = plan)
+        _state.update { it.copy(plan = plan) }
     }
 
     // ----------------------------------------------------------------- shutter
@@ -203,45 +204,47 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
         if (current.isCountingDown) {
             shutterJob?.cancel()
-            _state.value = _state.value.copy(countdown = null, message = null)
+            _state.update { it.copy(countdown = null, message = null) }
             return
         }
         if (current.isBusy) return
 
         val camera = current.selected ?: return
         if (!camera.supportsManual) {
-            _state.value = current.copy(
-                message = "${camera.label} cannot be driven manually. Pick another camera.",
-            )
+            _state.update {
+                it.copy(message = "${camera.label} cannot be driven manually. Pick another camera.")
+            }
             return
         }
 
         shutterJob = viewModelScope.launch {
-            _state.value = _state.value.copy(message = null, honouredExposureNs = null)
+            _state.update { it.copy(message = null, honouredExposureNs = null) }
 
             // Hands off the phone before the sensor opens. The wobble from tapping
             // a phone propped against a wall lasts well over a second, and it would
             // otherwise land in the first frames of the stack.
             val timer = _state.value.settings.timerSeconds
             for (remaining in timer downTo 1) {
-                _state.value = _state.value.copy(countdown = remaining)
+                _state.update { it.copy(countdown = remaining) }
                 delay(1000)
             }
-            _state.value = _state.value.copy(countdown = null)
+            _state.update { it.copy(countdown = null) }
 
             // Re-meter immediately before the exposure. The sky measured when the
             // app opened may be minutes old by now, and clouds move.
-            _state.value = _state.value.copy(phase = Phase.Metering)
+            _state.update { it.copy(phase = Phase.Metering) }
             metering = controller.meter()
             replan()
 
             val plan = _state.value.plan ?: return@launch
-            _state.value = _state.value.copy(
-                phase = Phase.Capturing,
-                framesDone = 0,
-                elapsedMs = 0L,
-                lastSavedName = null,
-            )
+            _state.update {
+                it.copy(
+                    phase = Phase.Capturing,
+                    framesDone = 0,
+                    elapsedMs = 0L,
+                    lastSavedName = null,
+                )
+            }
             startTimer()
             controller.startCapture(
                 plan = plan,
@@ -256,76 +259,121 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         val startedAt = System.currentTimeMillis()
         timerJob = viewModelScope.launch {
             while (_state.value.isCapturing) {
-                _state.value = _state.value.copy(elapsedMs = System.currentTimeMillis() - startedAt)
+                _state.update { it.copy(elapsedMs = System.currentTimeMillis() - startedAt) }
                 delay(200)
             }
         }
     }
 
+    // ---------------------------------------------------------------- callbacks
+    //
+    // Every one of these arrives on the camera's background thread, and every one
+    // of them is marshalled onto the main thread before it touches the state.
+    //
+    // This is what made a capture impossible to stop. State was updated as
+    // `_state.update { it.copy(...) }`, which is a read, then a write, with
+    // no atomicity between them. The elapsed-time ticker ran that pattern on the
+    // main thread five times a second while these callbacks ran it on the camera
+    // thread, so the sequence was:
+    //
+    //   1. the ticker reads a snapshot in which the phase is still Capturing
+    //   2. the camera thread sets the phase to Saving
+    //   3. the ticker writes its stale snapshot back, reviving Capturing
+    //
+    // and the ticker's own `while (isCapturing)` then kept it alive, re-asserting
+    // Capturing every 200 ms for as long as the app was open. The exposure had
+    // genuinely ended; the screen simply never admitted it, and the stop button
+    // called into a controller that had already stopped and returned immediately.
+    //
+    // Writes now happen on one thread and go through `update`, which is a
+    // compare-and-set that retries rather than clobbering.
+
     override fun onFrameStacked(framesDone: Int, framesTarget: Int, shiftX: Int, shiftY: Int) {
-        _state.value = _state.value.copy(
-            framesDone = framesDone,
-            alignShift = shiftX to shiftY,
-        )
+        viewModelScope.launch {
+            _state.update { it.copy(framesDone = framesDone, alignShift = shiftX to shiftY) }
+        }
     }
 
     override fun onExposureConfirmed(exposureNs: Long, iso: Int) {
-        _state.value = _state.value.copy(honouredExposureNs = exposureNs, honouredIso = iso)
+        viewModelScope.launch {
+            _state.update { it.copy(honouredExposureNs = exposureNs, honouredIso = iso) }
+        }
+    }
+
+    /**
+     * The shutter has closed; the picture is still being built.
+     *
+     * Moving out of [Phase.Capturing] here rather than when the finished JPEG
+     * arrives is the difference between a stop button that responds and one that
+     * appears broken: averaging and encoding twelve megapixels takes seconds, and
+     * for all of them the old UI carried on showing a running capture.
+     */
+    override fun onStopping() {
+        viewModelScope.launch {
+            timerJob?.cancel()
+            _state.update { it.copy(phase = Phase.Saving) }
+        }
     }
 
     override fun onCaptureComplete(jpeg: ByteArray?, frames: Int, integrationMs: Long) {
+        viewModelScope.launch { finishCapture(jpeg, frames, integrationMs) }
+    }
+
+    private suspend fun finishCapture(jpeg: ByteArray?, frames: Int, integrationMs: Long) {
         timerJob?.cancel()
         val camera = _state.value.selected
         val plan = _state.value.plan
 
         if (jpeg == null || frames == 0 || camera == null || plan == null) {
-            _state.value = _state.value.copy(
-                phase = Phase.Ready,
-                message = "The capture produced no frames.",
-            )
+            _state.update {
+                it.copy(phase = Phase.Ready, message = "The capture produced no frames.")
+            }
             return
         }
 
-        _state.value = _state.value.copy(phase = Phase.Saving)
-        viewModelScope.launch {
-            val saved = withContext(Dispatchers.IO) {
-                ImageSaver.saveJpeg(
-                    context = getApplication(),
-                    jpeg = jpeg,
-                    sensorOrientation = camera.sensorOrientation,
-                    frames = frames,
-                    integrationMs = integrationMs,
-                    exposureNs = plan.subExposureNs,
-                    iso = plan.iso,
-                )
-            }
+        _state.update { it.copy(phase = Phase.Saving) }
 
-            _state.value = saved.fold(
-                onSuccess = {
-                    _state.value.copy(
+        val saved = withContext(Dispatchers.IO) {
+            ImageSaver.saveJpeg(
+                context = getApplication(),
+                jpeg = jpeg,
+                sensorOrientation = camera.sensorOrientation,
+                frames = frames,
+                integrationMs = integrationMs,
+                exposureNs = plan.subExposureNs,
+                iso = plan.iso,
+            )
+        }
+
+        saved.fold(
+            onSuccess = { result ->
+                _state.update {
+                    it.copy(
                         phase = Phase.Ready,
-                        lastSavedName = it.displayName,
-                        lastSavedUri = it.uri,
+                        lastSavedName = result.displayName,
+                        lastSavedUri = result.uri,
                         message = "Saved — $frames frames, " + String.format(
                             java.util.Locale.US, "%.1f s of light", integrationMs / 1000.0,
                         ),
                     )
-                },
-                onFailure = {
-                    _state.value.copy(
+                }
+            },
+            onFailure = { error ->
+                _state.update {
+                    it.copy(
                         phase = Phase.Ready,
-                        message = it.message ?: "Could not save the photo",
+                        message = error.message ?: "Could not save the photo",
                     )
-                },
-            )
+                }
+            },
+        )
 
-            // A thumbnail of what was actually written to the gallery, not of what
-            // we hoped we wrote. If the file is unreadable this comes back null and
-            // the absence of a preview is itself the warning.
-            saved.getOrNull()?.let { result ->
-                val thumbnail = withContext(Dispatchers.IO) { decodeThumbnail(jpeg) }
-                _state.value = _state.value.copy(thumbnail = thumbnail)
-            }
+        // A thumbnail of what was actually written to the gallery, not of what we
+        // hoped we wrote. If the file is unreadable this comes back null and the
+        // absence of a preview is itself the warning.
+        if (saved.isSuccess) {
+            val thumbnail = withContext(Dispatchers.IO) { decodeThumbnail(jpeg) }
+            _state.update { it.copy(thumbnail = thumbnail) }
         }
     }
 
@@ -344,12 +392,14 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
     }.getOrNull()
 
     override fun onError(message: String) {
-        timerJob?.cancel()
-        _state.value = _state.value.copy(phase = Phase.Ready, message = message)
+        viewModelScope.launch {
+            timerJob?.cancel()
+            _state.update { it.copy(phase = Phase.Ready, message = message) }
+        }
     }
 
     fun dismissMessage() {
-        _state.value = _state.value.copy(message = null)
+        _state.update { it.copy(message = null) }
     }
 
     // ---------------------------------------------------------------- settings
@@ -371,17 +421,15 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
     fun checkForUpdates() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(update = UpdateState.Checking)
+            _state.update { it.copy(update = UpdateState.Checking) }
             val url = settingsStore.settings.first().updateUrl
-            _state.value = _state.value.copy(
-                update = when (val result = updateChecker.check(url)) {
-                    is UpdateChecker.Result.Available -> UpdateState.Available(result.manifest)
-                    UpdateChecker.Result.UpToDate -> UpdateState.UpToDate
-                    UpdateChecker.Result.NotConfigured ->
-                        UpdateState.Failed("No update address is set.")
-                    is UpdateChecker.Result.Failed -> UpdateState.Failed(result.reason)
-                },
-            )
+            val outcome = when (val result = updateChecker.check(url)) {
+                is UpdateChecker.Result.Available -> UpdateState.Available(result.manifest)
+                UpdateChecker.Result.UpToDate -> UpdateState.UpToDate
+                UpdateChecker.Result.NotConfigured -> UpdateState.Failed("No update address is set.")
+                is UpdateChecker.Result.Failed -> UpdateState.Failed(result.reason)
+            }
+            _state.update { it.copy(update = outcome) }
         }
     }
 
@@ -392,20 +440,20 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         }
 
         viewModelScope.launch {
-            _state.value = _state.value.copy(update = UpdateState.Downloading(0f))
+            _state.update { it.copy(update = UpdateState.Downloading(0f)) }
             val file = updateChecker.download(manifest) { progress ->
-                _state.value = _state.value.copy(update = UpdateState.Downloading(progress))
+                _state.update { it.copy(update = UpdateState.Downloading(progress)) }
             }
 
             file.fold(
                 onSuccess = {
-                    _state.value = _state.value.copy(update = UpdateState.Installing)
+                    _state.update { it.copy(update = UpdateState.Installing) }
                     updateChecker.install(it)
                 },
-                onFailure = {
-                    _state.value = _state.value.copy(
-                        update = UpdateState.Failed(it.message ?: "Download failed"),
-                    )
+                onFailure = { error ->
+                    _state.update {
+                        it.copy(update = UpdateState.Failed(error.message ?: "Download failed"))
+                    }
                 },
             )
         }
@@ -415,7 +463,7 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         controller.stopCapture()
         controller.close()
         surface = null
-        _state.value = _state.value.copy(phase = Phase.Idle)
+        _state.update { it.copy(phase = Phase.Idle) }
     }
 
     override fun onCleared() {

@@ -45,6 +45,13 @@ class CameraController(private val context: Context) {
          */
         fun onExposureConfirmed(exposureNs: Long, iso: Int)
 
+        /**
+         * The exposure has ended and the stack is being turned into a photograph.
+         * Fired before the encode so the UI can stop showing a running capture
+         * immediately rather than seconds later.
+         */
+        fun onStopping()
+
         /** The capture finished or was stopped; [jpeg] is the finished image. */
         fun onCaptureComplete(jpeg: ByteArray?, frames: Int, integrationMs: Long)
 
@@ -69,8 +76,10 @@ class CameraController(private val context: Context) {
 
     @Volatile private var capturing = false
     @Volatile private var framesTarget = 0
-    @Volatile private var framesSeen = 0
+    @Volatile private var budget: CaptureBudget? = null
     @Volatile private var captureStartedAt = 0L
+    @Volatile private var lastFrameAt = 0L
+    @Volatile private var frameTimeoutMs = 10_000L
     @Volatile private var autoStretch = true
 
     private var listener: Listener? = null
@@ -284,9 +293,19 @@ class CameraController(private val context: Context) {
             margin = EDGE_CROP_PX,
         )
         framesTarget = plan.frameCount
-        framesSeen = 0
+        budget = CaptureBudget(plan.frameCount, WARMUP_FRAMES)
         captureStartedAt = System.currentTimeMillis()
+        lastFrameAt = captureStartedAt
+        frameTimeoutMs = maxOf(MIN_FRAME_TIMEOUT_MS, plan.subExposureMs * 4)
         capturing = true
+
+        Log.i(
+            TAG,
+            "startCapture ${plan.mode}: target=${plan.frameCount} frames, " +
+                "sub=${plan.subExposureNs}ns, iso=${plan.iso}, " +
+                "size=${camera.captureSize.width}x${camera.captureSize.height}",
+        )
+        handler?.postDelayed(watchdog, WATCHDOG_INTERVAL_MS)
 
         // TEMPLATE_MANUAL, not TEMPLATE_STILL_CAPTURE.
         //
@@ -355,9 +374,11 @@ class CameraController(private val context: Context) {
             setIfSupported(CaptureRequest.BLACK_LEVEL_LOCK, true)
         }.build()
 
-        runCatching { session.setRepeatingRequest(request, captureCallback, handler) }
+        runCatching { session.setRepeatingRequest(request, exposureCallback(), handler) }
             .onFailure {
+                Log.e(TAG, "setRepeatingRequest failed", it)
                 capturing = false
+                handler?.removeCallbacks(watchdog)
                 listener?.onError(it.message ?: "Could not start the exposure")
             }
     }
@@ -378,7 +399,15 @@ class CameraController(private val context: Context) {
         }
     }
 
-    private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+    /**
+     * A fresh callback for every capture.
+     *
+     * The previous one was a single shared instance holding a `reported` flag that
+     * was never reset, so only the very first capture of a session ever reported
+     * what the sensor actually did. Every capture after that silently showed no
+     * confirmed shutter speed at all.
+     */
+    private fun exposureCallback() = object : CameraCaptureSession.CaptureCallback() {
         private var reported = false
 
         override fun onCaptureCompleted(
@@ -402,21 +431,42 @@ class CameraController(private val context: Context) {
      *
      * Also the normal end of an indefinite capture — the frames already stacked
      * are a complete photograph, so stopping never discards anything.
+     *
+     * [reason] is logged, because "why did this capture end" is the single most
+     * useful thing to know when one ends too early, too late, or not at all.
      */
-    fun stopCapture() {
-        if (!capturing) return
+    @JvmOverloads
+    fun stopCapture(reason: String = "user") {
+        if (!capturing) {
+            Log.i(TAG, "stopCapture($reason) ignored — not capturing")
+            return
+        }
         capturing = false
-        runCatching { session?.stopRepeating() }
+        handler?.removeCallbacks(watchdog)
 
         val stacker = stacker
         val elapsed = System.currentTimeMillis() - captureStartedAt
+        Log.i(
+            TAG,
+            "stopCapture($reason): ${stacker?.frameCount ?: 0}/$framesTarget frames in ${elapsed}ms",
+        )
+
+        // Tell the UI immediately, before the encode. Averaging and compressing
+        // twelve megapixels takes seconds, and the shutter used to sit there still
+        // reading STOP for all of it — which looks exactly like a button that did
+        // nothing, so the natural response is to tap it again.
+        listener?.onStopping()
+
+        runCatching { session?.stopRepeating() }
 
         handler?.post {
+            val startedEncoding = System.currentTimeMillis()
             val jpeg = runCatching {
                 stacker?.averageToNv21(autoStretch)?.let {
                     JpegEncoder.encode(it, stacker.outputWidth, stacker.outputHeight)
                 }
             }.onFailure { Log.e(TAG, "Encoding the stack failed", it) }.getOrNull()
+            Log.i(TAG, "Encoded in ${System.currentTimeMillis() - startedEncoding}ms")
 
             listener?.onCaptureComplete(jpeg, stacker?.frameCount ?: 0, elapsed)
             this.stacker = null
@@ -424,18 +474,46 @@ class CameraController(private val context: Context) {
         }
     }
 
+    /**
+     * Ends a capture that has stalled.
+     *
+     * If the HAL stops delivering frames — and vendor camera stacks do, when
+     * another app grabs the sensor or the pipeline hits an internal error — the
+     * target is never reached and nothing else would ever stop the capture. It
+     * would run until the phone was put away. Whatever frames were gathered still
+     * make a photograph, so a stall ends the capture rather than losing it.
+     */
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!capturing) return
+            val silence = System.currentTimeMillis() - lastFrameAt
+            if (silence > frameTimeoutMs) {
+                Log.w(TAG, "No frame for ${silence}ms — ending capture")
+                stopCapture("stalled")
+            } else {
+                handler?.postDelayed(this, WATCHDOG_INTERVAL_MS)
+            }
+        }
+    }
+
     private fun onImageAvailable(reader: ImageReader) {
-        val image = runCatching { reader.acquireNextImage() }.getOrNull() ?: return
+        val image = runCatching { reader.acquireNextImage() }
+            .onFailure { Log.w(TAG, "Could not acquire a frame", it) }
+            .getOrNull() ?: return
         try {
             if (!capturing) return
             val stacker = stacker ?: return
 
-            framesSeen++
-            // The first frame after switching into manual is delivered while the
-            // sensor is still ramping to the requested exposure, and it is also the
-            // one most likely to carry the shake from the tap that started the
-            // capture. It is thrown away rather than stacked.
-            if (framesSeen <= WARMUP_FRAMES) return
+            val budget = budget ?: return
+            val now = System.currentTimeMillis()
+            val gap = now - lastFrameAt
+            lastFrameAt = now
+
+            val action = budget.onFrameDelivered()
+            if (action == CaptureBudget.Action.DISCARD) {
+                Log.i(TAG, "Discarding warm-up frame ${budget.delivered}")
+                return
+            }
 
             stacker.add(
                 image.planes[0].toSource(),
@@ -443,14 +521,21 @@ class CameraController(private val context: Context) {
                 image.planes[2].toSource(),
             )
             val done = stacker.frameCount
+            val stackMs = System.currentTimeMillis() - now
+            Log.i(
+                TAG,
+                "frame $done/$framesTarget  +${now - captureStartedAt}ms  gap=${gap}ms  stack=${stackMs}ms",
+            )
             listener?.onFrameStacked(done, framesTarget, stacker.lastShiftX, stacker.lastShiftY)
 
-            if (framesTarget != Int.MAX_VALUE && done >= framesTarget) {
-                stopCapture()
+            if (action == CaptureBudget.Action.STACK_AND_FINISH) {
+                stopCapture("reached target")
             }
         } catch (error: Throwable) {
             Log.e(TAG, "Stacking failed", error)
             capturing = false
+            handler?.removeCallbacks(watchdog)
+            runCatching { session?.stopRepeating() }
             listener?.onError(error.message ?: "Stacking failed")
         } finally {
             image.close()
@@ -484,6 +569,16 @@ class CameraController(private val context: Context) {
         const val METERING_FRAMES = 8
         const val METERING_TIMEOUT_MS = 4_000L
         const val WARMUP_FRAMES = 1
+
+        /** How often the stall check runs while a capture is in flight. */
+        const val WATCHDOG_INTERVAL_MS = 2_000L
+
+        /**
+         * A capture is considered stalled after this much silence, or four times
+         * the requested exposure, whichever is longer — long frames legitimately
+         * leave long gaps.
+         */
+        const val MIN_FRAME_TIMEOUT_MS = 8_000L
 
         /**
          * Trimmed from every edge of the finished photograph. Measured on this
