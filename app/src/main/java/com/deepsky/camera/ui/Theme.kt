@@ -1,6 +1,5 @@
 package com.deepsky.camera.ui
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -12,56 +11,116 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 /**
- * Dark at all times, with a deep red accent.
+ * One dark palette, warm accent, no light theme.
  *
- * This is not a style choice. Eyes take twenty minutes to fully dark-adapt and a
- * single white screen undoes it instantly; long-wavelength red is the one colour
- * that leaves night vision largely intact. The app therefore ignores the system
- * light theme entirely — there is no correct light rendering of a screen you use
- * in a dark field.
+ * Not a style preference. Eyes take about twenty minutes to fully dark-adapt and
+ * one white screen undoes it, so the app ignores the system light theme entirely
+ * — there is no correct bright rendering of a screen used in a dark field.
+ *
+ * The accent is amber rather than the obvious red. Long wavelengths preserve
+ * night vision just as well, and amber stays legible against a near-black
+ * background at low screen brightness where a saturated red goes muddy and
+ * vibrates against dark grey.
  */
-private val NightColors = darkColorScheme(
-    primary = Color(0xFFE23B2E),
-    onPrimary = Color(0xFF160000),
-    primaryContainer = Color(0xFF3A0D08),
-    onPrimaryContainer = Color(0xFFFFB4A8),
-    secondary = Color(0xFF7FA3D8),
-    onSecondary = Color(0xFF04101F),
-    background = Color(0xFF000000),
-    onBackground = Color(0xFFE8E6E6),
-    surface = Color(0xFF0B0B0E),
-    onSurface = Color(0xFFE8E6E6),
-    surfaceVariant = Color(0xFF1A1A20),
-    onSurfaceVariant = Color(0xFFB9B6BC),
-    outline = Color(0xFF3A3A42),
-    error = Color(0xFFFF6B5E),
-)
+object Ink {
+    /** Page background. Very slightly blue, which reads as darker than pure black. */
+    val Background = Color(0xFF07080A)
 
-private val NightTypography = Typography(
-    // The readouts — shutter, ISO, frame count — are monospaced so the numbers
-    // stop jittering sideways as they tick upward during a capture.
-    labelLarge = TextStyle(
+    /** Raised panels: the control deck, cards, the settings sheet. */
+    val Surface = Color(0xFF101217)
+    val SurfaceHigh = Color(0xFF181B22)
+
+    /** Hairlines and dividers. Never heavier than this. */
+    val Line = Color(0xFF262A33)
+
+    val TextPrimary = Color(0xFFF3F4F7)
+    val TextSecondary = Color(0xFF8B909B)
+    val TextTertiary = Color(0xFF565B66)
+
+    val Accent = Color(0xFFFF9F4A)
+    val AccentSoft = Color(0x24FF9F4A)
+    val Danger = Color(0xFFFF5F4A)
+
+    /** Scrims over the live preview, so controls stay readable on any sky. */
+    val Scrim = Color(0xB3000000)
+    val ScrimLight = Color(0x66000000)
+}
+
+/**
+ * Two families, used for different jobs.
+ *
+ * Monospace is reserved strictly for numbers that change — shutter, ISO, frame
+ * count, elapsed time. Digits then keep a fixed width, so a readout ticking from
+ * 9 to 10 frames does not shove the rest of the line sideways. Everything a
+ * person *reads* rather than *checks* is set in the system sans, because a whole
+ * interface in monospace looks like a log file rather than a camera.
+ */
+object Type {
+    val Readout = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.Medium,
         fontSize = 14.sp,
-        letterSpacing = 0.5.sp,
-    ),
-    labelMedium = TextStyle(
+        letterSpacing = 0.sp,
+    )
+    val ReadoutSmall = TextStyle(
         fontFamily = FontFamily.Monospace,
         fontWeight = FontWeight.Normal,
+        fontSize = 11.5.sp,
+        letterSpacing = 0.sp,
+    )
+    val Label = TextStyle(
+        fontWeight = FontWeight.Medium,
+        fontSize = 13.sp,
+        letterSpacing = 0.15.sp,
+    )
+    val Caption = TextStyle(
+        fontWeight = FontWeight.Normal,
         fontSize = 12.sp,
-        letterSpacing = 0.4.sp,
-    ),
+        letterSpacing = 0.1.sp,
+    )
+    /** Section headers in Settings. Small, wide, quiet. */
+    val Overline = TextStyle(
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 10.5.sp,
+        letterSpacing = 1.4.sp,
+    )
+    val Title = TextStyle(
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 19.sp,
+        letterSpacing = 0.sp,
+    )
+    val Countdown = TextStyle(
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Light,
+        fontSize = 72.sp,
+    )
+}
+
+private val NightColors = darkColorScheme(
+    primary = Ink.Accent,
+    onPrimary = Color(0xFF1A0E03),
+    primaryContainer = Ink.SurfaceHigh,
+    onPrimaryContainer = Ink.TextPrimary,
+    secondary = Ink.TextSecondary,
+    background = Ink.Background,
+    onBackground = Ink.TextPrimary,
+    surface = Ink.Surface,
+    onSurface = Ink.TextPrimary,
+    surfaceVariant = Ink.SurfaceHigh,
+    onSurfaceVariant = Ink.TextSecondary,
+    outline = Ink.Line,
+    error = Ink.Danger,
 )
 
 @Composable
-fun DeepSkyTheme(
-    @Suppress("UNUSED_PARAMETER") darkTheme: Boolean = isSystemInDarkTheme(),
-    content: @Composable () -> Unit,
-) {
+fun DeepSkyTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = NightColors,
-        typography = NightTypography,
+        typography = Typography(
+            titleMedium = Type.Title,
+            labelLarge = Type.Label,
+            labelMedium = Type.Caption,
+        ),
         content = content,
     )
 }

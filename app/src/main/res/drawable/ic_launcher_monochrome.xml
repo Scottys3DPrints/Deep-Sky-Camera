@@ -1,0 +1,18 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!--
+      The themed-icon variant. Android 13 and later tint this with the user's
+      wallpaper palette, so it is a single flat silhouette: any colour set here
+      would simply be replaced.
+    -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,25 C55.5,42 58.5,45.5 76,47.5 C58.5,49.5 55.5,53 54,70 C52.5,53 49.5,49.5 32,47.5 C49.5,45.5 52.5,42 54,25 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M75,62 C75.8,69.5 77.2,71 85,72 C77.2,73 75.8,74.5 75,82 C74.2,74.5 72.8,73 65,72 C72.8,71 74.2,69.5 75,62 Z" />
+</vector>

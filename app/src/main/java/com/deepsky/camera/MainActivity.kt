@@ -6,8 +6,11 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -22,7 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -37,6 +40,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Draw behind the system bars, so the viewfinder sits in a continuous dark
+        // field rather than between two grey strips. Every screen then insets
+        // itself with statusBarsPadding / navigationBarsPadding, which also keeps
+        // the layout identical on Android 15, where edge-to-edge is compulsory.
+        enableEdgeToEdge()
 
         // A stack runs for minutes with no touch input. If the screen slept the
         // capture would be cut short, so it is held awake for as long as the app
@@ -141,25 +150,37 @@ private fun PermissionWall(onGrant: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .padding(32.dp),
+            .background(com.deepsky.camera.ui.Ink.Background)
+            .padding(36.dp),
         verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
             text = "Deep Sky Camera needs the camera",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            style = com.deepsky.camera.ui.Type.Title,
+            color = com.deepsky.camera.ui.Ink.TextPrimary,
             textAlign = TextAlign.Center,
         )
         Text(
-            text = "It is used only while the app is open, to take the photographs you ask " +
-                "for. Nothing is uploaded anywhere.",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text = "Used only while the app is open, to take the photographs you ask for. " +
+                "Nothing is uploaded anywhere.",
+            style = com.deepsky.camera.ui.Type.Caption,
+            color = com.deepsky.camera.ui.Ink.TextTertiary,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 12.dp, bottom = 20.dp),
+            modifier = Modifier.padding(top = 12.dp, bottom = 28.dp),
         )
-        Button(onClick = onGrant) { Text("Allow camera") }
+        Box(
+            modifier = Modifier
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(11.dp))
+                .background(com.deepsky.camera.ui.Ink.Accent)
+                .clickable(onClick = onGrant)
+                .padding(horizontal = 22.dp, vertical = 12.dp),
+        ) {
+            Text(
+                text = "Allow camera",
+                style = com.deepsky.camera.ui.Type.Label,
+                color = com.deepsky.camera.ui.Ink.Background,
+            )
+        }
     }
 }

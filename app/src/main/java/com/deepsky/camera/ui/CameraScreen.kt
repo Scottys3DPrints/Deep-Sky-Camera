@@ -1,10 +1,14 @@
 package com.deepsky.camera.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,21 +18,20 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -40,27 +43,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.deepsky.camera.camera.AstroCamera
 import com.deepsky.camera.camera.CaptureMode
 import com.deepsky.camera.camera.CapturePlan
 import com.deepsky.camera.camera.ExposureLimit
 
 /**
- * The whole app, on one screen.
+ * The whole app on one screen, laid out for the conditions it is used in:
+ * outdoors, in the dark, one-handed, by eyes that have spent twenty minutes
+ * adapting.
  *
- * Laid out for the conditions it is used in: outdoors, in the dark, one-handed,
- * by eyes that have spent twenty minutes adapting. Everything needed to take a
- * photograph is reachable without leaving this screen, everything else lives in
- * Settings, and the preview is never covered by a control that could have sat on
- * the black band beside it.
+ * Three bands, in the order attention moves through them — what the camera is
+ * pointed at, what it is about to do, and the control to do it. Everything
+ * needed to take a photograph is here; everything else is in Settings.
  */
 @Composable
 fun CameraScreen(
@@ -78,59 +81,54 @@ fun CameraScreen(
 ) {
     var showTuning by remember { mutableStateOf(false) }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Ink.Background)
+            .statusBarsPadding(),
     ) {
-        // The preview fills the width and keeps its true aspect ratio rather than
-        // being cropped to fill the screen. Framing a constellation needs the whole
-        // field visible, and the black bands left over are exactly where the
-        // controls want to sit anyway.
-        val camera = state.selected
-        if (camera != null) {
-            CameraPreview(
-                previewSize = camera.previewSize,
-                sensorOrientation = camera.sensorOrientation,
-                onSurfaceReady = onSurfaceReady,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth()
-                    .aspectRatio(camera.previewSize.height.toFloat() / camera.previewSize.width),
-            )
-        } else {
-            Text(
-                text = "Waking the camera…",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.align(Alignment.Center),
-            )
-        }
-
-        TopBar(
+        LensBar(
             cameras = state.cameras,
             selected = state.selected,
             enabled = !state.isCapturing && !state.isCountingDown,
+            tuningOpen = showTuning,
             onSelect = onSelectCamera,
             onToggleTuning = { showTuning = !showTuning },
             onOpenSettings = onOpenSettings,
-            modifier = Modifier.align(Alignment.TopCenter),
         )
 
-        if (state.isCapturing) {
-            CaptureReadouts(
-                state = state,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(start = 12.dp, top = 72.dp),
-            )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Viewfinder(state = state, onSurfaceReady = onSurfaceReady)
+
+            if (state.isCapturing) {
+                CaptureHud(
+                    state = state,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(14.dp),
+                )
+            }
+
+            state.countdown?.let { Countdown(it) }
+
+            state.message?.let { message ->
+                Toast(
+                    message = message,
+                    onDismiss = onDismissMessage,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(14.dp),
+                )
+            }
         }
 
-        state.countdown?.let { seconds ->
-            CountdownOverlay(seconds, Modifier.align(Alignment.Center))
-        }
-
-        BottomControls(
+        ControlDeck(
             state = state,
             showTuning = showTuning,
             onSelectMode = onSelectMode,
@@ -139,172 +137,224 @@ fun CameraScreen(
             onEvChange = onEvChange,
             onTimerChange = onTimerChange,
             onOpenLastPhoto = onOpenLastPhoto,
-            onDismissMessage = onDismissMessage,
-            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+/**
+ * The live view, inset and rounded rather than bleeding to the screen edge.
+ *
+ * A hairline border and a little breathing room make it read as a frame you are
+ * composing inside, and stop a dark sky from dissolving into an equally dark
+ * bezel with no visible boundary between them.
+ */
+@Composable
+private fun Viewfinder(state: UiState, onSurfaceReady: (android.view.Surface) -> Unit) {
+    val camera = state.selected
+    if (camera == null) {
+        Text(
+            text = "Waking the camera",
+            style = Type.Caption,
+            color = Ink.TextTertiary,
+        )
+        return
+    }
+
+    Box(
+        modifier = Modifier
+            // Deliberately no fillMaxWidth: on its own, aspectRatio fits itself to
+            // whichever incoming constraint binds. Forcing the width instead makes
+            // the frame taller than its slot the moment the tuning panel opens, and
+            // the bottom of the preview disappears under the controls.
+            .aspectRatio(camera.previewSize.height.toFloat() / camera.previewSize.width)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.Black)
+            .border(1.dp, Ink.Line, RoundedCornerShape(18.dp)),
+    ) {
+        CameraPreview(
+            previewSize = camera.previewSize,
+            sensorOrientation = camera.sensorOrientation,
+            onSurfaceReady = onSurfaceReady,
+            modifier = Modifier.fillMaxSize(),
         )
     }
 }
 
 @Composable
-private fun TopBar(
+private fun LensBar(
     cameras: List<AstroCamera>,
     selected: AstroCamera?,
     enabled: Boolean,
+    tuningOpen: Boolean,
     onSelect: (AstroCamera) -> Unit,
     onToggleTuning: () -> Unit,
     onOpenSettings: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             // Only cameras that can be driven manually are offered. One that cannot
-            // be told its exposure is useless here: it would meter the night sky as
-            // a black frame and hand back exactly that.
+            // be told its exposure would meter the night sky as a black frame and
+            // hand back exactly that.
             cameras.filter { it.supportsManual && !it.isFrontFacing }.forEach { camera ->
-                PillButton(
+                LensTab(
                     label = camera.label.substringBefore(" ("),
-                    selected = camera.id == selected?.id,
+                    active = camera.id == selected?.id,
                     enabled = enabled,
                     onClick = { onSelect(camera) },
                 )
             }
         }
 
-        IconButton(onClick = onToggleTuning) {
-            Icon(
-                imageVector = Icons.Filled.Tune,
-                contentDescription = "Focus and brightness",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        IconButton(onClick = onOpenSettings) {
-            Icon(
-                imageVector = Icons.Filled.Settings,
-                contentDescription = "Settings",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        Spacer(Modifier.weight(1f))
+
+        GhostIcon(
+            icon = Icons.Filled.Tune,
+            description = "Focus and brightness",
+            active = tuningOpen,
+            onClick = onToggleTuning,
+        )
+        GhostIcon(
+            icon = Icons.Filled.Settings,
+            description = "Settings",
+            active = false,
+            onClick = onOpenSettings,
+        )
     }
 }
 
 /**
- * A pill rather than a Material chip.
+ * A lens choice as a word with a dot under it, not a filled slab.
  *
- * Chips render a hairline outline and small text that all but vanishes at the
- * screen brightness this app is used at. These are larger, higher contrast, and
- * have a touch target that can be found without looking.
+ * Two or three of these sit at the top of the screen permanently; as solid pills
+ * they dominated a view whose whole job is to show the sky.
  */
 @Composable
-private fun PillButton(
-    label: String,
-    selected: Boolean,
-    enabled: Boolean = true,
-    onClick: () -> Unit,
-) {
-    Box(
+private fun LensTab(label: String, active: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val color by animateColorAsState(
+        if (active) Ink.Accent else Ink.TextSecondary,
+        label = "lensColor",
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary
-                else Color.White.copy(alpha = 0.12f)
-            )
+            .clip(RoundedCornerShape(10.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .alpha(if (enabled) 1f else 0.4f)
-            .padding(horizontal = 16.dp, vertical = 9.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (selected) {
-                MaterialTheme.colorScheme.onPrimary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
+        Text(text = label, style = Type.Label, color = color)
+        Spacer(Modifier.height(5.dp))
+        Box(
+            modifier = Modifier
+                .size(4.dp)
+                .clip(CircleShape)
+                .background(if (active) Ink.Accent else Color.Transparent),
         )
     }
 }
 
 @Composable
-private fun CaptureReadouts(state: UiState, modifier: Modifier = Modifier) {
+private fun GhostIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val tint by animateColorAsState(
+        if (active) Ink.Accent else Ink.TextSecondary,
+        label = "iconTint",
+    )
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, contentDescription = description, tint = tint, modifier = Modifier.size(21.dp))
+    }
+}
+
+/** Live numbers during a capture, floating over the frame they describe. */
+@Composable
+private fun CaptureHud(state: UiState, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color.Black.copy(alpha = 0.6f))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(3.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .background(Ink.Scrim)
+            .padding(horizontal = 13.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         val target = state.plan?.frameCount ?: 0
         Text(
             text = if (target == Int.MAX_VALUE) {
                 "${state.framesDone} frames"
             } else {
-                "${state.framesDone} / $target frames"
+                "${state.framesDone}/$target frames"
             },
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold,
+            style = Type.Readout,
+            color = Ink.TextPrimary,
         )
-        Readout(formatElapsed(state.elapsedMs) + " elapsed")
+        Text(formatElapsed(state.elapsedMs), style = Type.ReadoutSmall, color = Ink.TextSecondary)
 
-        // What the sensor actually did. If a phone silently clamps the exposure,
-        // this is where it becomes visible instead of quietly halving the light.
-        state.honouredExposureNs?.let { actual ->
-            Readout("shutter ${CapturePlan.formatSeconds(actual)}", dim = true)
+        // What the sensor actually did, as opposed to what it was asked for. A
+        // phone that silently clamps the exposure shows up here and nowhere else.
+        state.honouredExposureNs?.let {
+            Text(
+                text = CapturePlan.formatSeconds(it),
+                style = Type.ReadoutSmall,
+                color = Ink.TextTertiary,
+            )
         }
 
         val (shiftX, shiftY) = state.alignShift
         if (shiftX != 0 || shiftY != 0) {
             // Watching this creep upward is watching the sky rotate.
-            Readout("drift $shiftX, $shiftY px", dim = true)
+            Text(
+                text = "drift $shiftX,$shiftY",
+                style = Type.ReadoutSmall,
+                color = Ink.TextTertiary,
+            )
         }
     }
 }
 
 @Composable
-private fun Readout(text: String, dim: Boolean = false) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.labelMedium,
-        color = if (dim) {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        } else {
-            MaterialTheme.colorScheme.onSurface
-        },
-    )
-}
-
-@Composable
-private fun CountdownOverlay(seconds: Int, modifier: Modifier = Modifier) {
+private fun Countdown(seconds: Int) {
     Box(
-        modifier = modifier
-            .size(120.dp)
+        modifier = Modifier
+            .size(128.dp)
             .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.6f)),
+            .background(Ink.Scrim),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = seconds.toString(),
-            fontSize = 64.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Light,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        Text(seconds.toString(), style = Type.Countdown, color = Ink.Accent)
     }
 }
 
 @Composable
-private fun BottomControls(
+private fun Toast(message: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Text(
+        text = message,
+        style = Type.Caption,
+        color = Ink.TextPrimary,
+        textAlign = TextAlign.Center,
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Ink.Scrim)
+            .clickable(onClick = onDismiss)
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+    )
+}
+
+@Composable
+private fun ControlDeck(
     state: UiState,
     showTuning: Boolean,
     onSelectMode: (CaptureMode) -> Unit,
@@ -313,16 +363,17 @@ private fun BottomControls(
     onEvChange: (Float) -> Unit,
     onTimerChange: (Int) -> Unit,
     onOpenLastPhoto: () -> Unit,
-    onDismissMessage: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.75f))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+            .background(Ink.Surface)
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp)
+            .padding(top = 14.dp, bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         if (showTuning) {
             TuningPanel(
@@ -333,39 +384,25 @@ private fun BottomControls(
             )
         }
 
-        PlanSummary(state.plan)
+        PlanReadout(state.plan)
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-        ) {
-            CaptureMode.entries.forEach { mode ->
-                PillButton(
-                    label = mode.label,
-                    selected = mode == state.mode,
-                    enabled = !state.isCapturing && !state.isCountingDown,
-                    onClick = { onSelectMode(mode) },
-                )
-            }
-        }
+        ModeSelector(
+            selected = state.mode,
+            enabled = !state.isCapturing && !state.isCountingDown,
+            onSelect = onSelectMode,
+        )
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            LastShot(
-                thumbnail = state.thumbnail,
-                onClick = onOpenLastPhoto,
-                modifier = Modifier.width(72.dp),
-            )
-
-            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Box(Modifier.width(64.dp), contentAlignment = Alignment.CenterStart) {
+                LastShot(state.thumbnail, onOpenLastPhoto)
+            }
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 ShutterButton(state = state, onClick = onShutter)
             }
-
-            Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.width(64.dp), contentAlignment = Alignment.CenterEnd) {
                 TimerButton(
                     seconds = state.settings.timerSeconds,
                     enabled = !state.isCapturing && !state.isCountingDown,
@@ -373,76 +410,128 @@ private fun BottomControls(
                 )
             }
         }
-
-        state.message?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.secondary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onDismissMessage),
-            )
-        }
     }
 }
 
 /**
- * Shows exactly what the app decided to do, before it does it.
+ * What the app decided to do, before it does it.
  *
- * The promise is that you pick a duration and the app works out the rest — but a
- * black box silently choosing your settings is not something to trust at two in
- * the morning when a picture comes out wrong. So the plan is on screen, in the
- * terms an astrophotographer would use.
+ * The promise is that you pick a duration and it works out the rest, but a black
+ * box quietly choosing your settings is not something to trust at two in the
+ * morning when a picture comes out wrong. The numbers are set in monospace and
+ * given the most weight on the screen after the shutter; the reason sits under
+ * them in a single quiet line, where it informs without competing.
  */
 @Composable
-private fun PlanSummary(plan: CapturePlan?) {
+private fun PlanReadout(plan: CapturePlan?) {
     if (plan == null) {
-        Text(
-            text = "Reading the sky…",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Text("Reading the sky", style = Type.Caption, color = Ink.TextTertiary)
         return
     }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        val total = when {
-            plan.mode == CaptureMode.SINGLE -> ""
-            plan.mode.isIndefinite -> "  ·  until you stop"
-            else -> String.format(
-                java.util.Locale.US, "  ·  %.0f s total", plan.plannedIntegrationMs / 1000.0,
-            )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Value(CapturePlan.formatSeconds(plan.subExposureNs).replace(" ", ""))
+            Dot()
+            Value("ISO ${plan.iso}")
+            if (plan.mode != CaptureMode.SINGLE) {
+                Dot()
+                Value(if (plan.frameCount == Int.MAX_VALUE) "∞" else "×${plan.frameCount}")
+                Dot()
+                Value(
+                    if (plan.mode.isIndefinite) {
+                        "open"
+                    } else {
+                        String.format(java.util.Locale.US, "%.0fs", plan.plannedIntegrationMs / 1000.0)
+                    }
+                )
+            }
         }
 
-        Text(
-            text = plan.summary() + total,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Medium,
-        )
+        Spacer(Modifier.height(5.dp))
 
         Text(
             text = when (plan.limitedBy) {
-                ExposureLimit.SCENE_BRIGHTNESS ->
-                    "Too bright for a night exposure — shutter cut to " +
-                        "${CapturePlan.formatSeconds(plan.subExposureNs)} so it does not blow out"
-                ExposureLimit.STAR_TRAILING ->
-                    "Held to ${CapturePlan.formatSeconds(plan.subExposureNs)} per frame " +
-                        "so the stars stay points, not streaks"
+                ExposureLimit.SCENE_BRIGHTNESS -> "Too bright for a long frame — shutter shortened"
+                ExposureLimit.STAR_TRAILING -> "Short enough to keep stars as points"
                 ExposureLimit.HARDWARE ->
                     if (plan.mode == CaptureMode.SINGLE) {
                         "One frame, no stacking"
                     } else {
-                        "${CapturePlan.formatSeconds(plan.subExposureNs)} is the longest single " +
-                            "frame this sensor allows — the rest comes from stacking"
+                        "The longest frame this sensor allows, stacked"
                     }
             },
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = Type.Caption,
+            color = Ink.TextTertiary,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+@Composable
+private fun Value(text: String) {
+    Text(text, style = Type.Readout, color = Ink.TextPrimary)
+}
+
+@Composable
+private fun Dot() {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 9.dp)
+            .size(3.dp)
+            .clip(CircleShape)
+            .background(Ink.TextTertiary),
+    )
+}
+
+/**
+ * A segmented track rather than four separate buttons.
+ *
+ * These are four values of one setting, and a shared track says so at a glance;
+ * as loose pills they read as four unrelated things and the row ran off the edge
+ * of a narrow screen.
+ */
+@Composable
+private fun ModeSelector(
+    selected: CaptureMode,
+    enabled: Boolean,
+    onSelect: (CaptureMode) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(13.dp))
+            .background(Ink.SurfaceHigh)
+            .padding(3.dp)
+            .alpha(if (enabled) 1f else 0.45f),
+    ) {
+        CaptureMode.entries.forEach { mode ->
+            val active = mode == selected
+            val background by animateColorAsState(
+                if (active) Ink.Accent else Color.Transparent,
+                label = "segmentBg",
+            )
+            val textColor by animateColorAsState(
+                if (active) Ink.Background else Ink.TextSecondary,
+                label = "segmentFg",
+            )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(background)
+                    .clickable(
+                        enabled = enabled,
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { onSelect(mode) }
+                    .padding(vertical = 9.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(mode.label, style = Type.Label, color = textColor)
+            }
+        }
     }
 }
 
@@ -456,76 +545,81 @@ private fun TuningPanel(
     var focusValue by remember(focus) { mutableFloatStateOf(focus) }
     var evValue by remember(ev) { mutableFloatStateOf(ev) }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(Ink.SurfaceHigh)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
         // Focus is the one thing no amount of stacking can rescue. Autofocus cannot
         // lock onto a star, so it is set by hand and starts at infinity — right for
         // the sky, but phone lenses vary enough to want a nudge.
-        SliderRow(
-            label = if (focusValue <= 0.01f) {
-                "Focus  ∞"
-            } else {
-                String.format(java.util.Locale.US, "Focus  %.2f", focusValue)
-            },
-            value = focusValue,
+        TuningSlider(
+            name = "Focus",
+            value = if (focusValue <= 0.01f) "∞" else String.format(java.util.Locale.US, "%.2f", focusValue),
+            position = focusValue,
             range = 0f..1.5f,
             onValueChange = { focusValue = it },
-            onValueChangeFinished = { onFocusChange(focusValue) },
+            onSettled = { onFocusChange(focusValue) },
         )
-        SliderRow(
-            label = String.format(java.util.Locale.US, "Bright  %+.1f EV", evValue),
-            value = evValue,
+        TuningSlider(
+            name = "Bright",
+            value = String.format(java.util.Locale.US, "%+.1f EV", evValue),
+            position = evValue,
             range = -3f..3f,
             onValueChange = { evValue = it },
-            onValueChangeFinished = { onEvChange(evValue) },
+            onSettled = { onEvChange(evValue) },
         )
     }
 }
 
 @Composable
-private fun SliderRow(
-    label: String,
-    value: Float,
+private fun TuningSlider(
+    name: String,
+    value: String,
+    position: Float,
     range: ClosedFloatingPointRange<Float>,
     onValueChange: (Float) -> Unit,
-    onValueChangeFinished: () -> Unit,
+    onSettled: () -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(104.dp),
-        )
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(name, style = Type.Caption, color = Ink.TextSecondary)
+            Text(value, style = Type.ReadoutSmall, color = Ink.TextPrimary)
+        }
         Slider(
-            value = value,
+            value = position,
             onValueChange = onValueChange,
-            onValueChangeFinished = onValueChangeFinished,
+            onValueChangeFinished = onSettled,
             valueRange = range,
-            modifier = Modifier.weight(1f),
+            colors = SliderDefaults.colors(
+                thumbColor = Ink.Accent,
+                activeTrackColor = Ink.Accent,
+                inactiveTrackColor = Ink.Line,
+            ),
+            modifier = Modifier.height(28.dp),
         )
     }
 }
 
 @Composable
-private fun LastShot(
-    thumbnail: android.graphics.Bitmap?,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Box(modifier = modifier, contentAlignment = Alignment.Center) {
-        if (thumbnail == null) return@Box
+private fun LastShot(thumbnail: android.graphics.Bitmap?, onClick: () -> Unit) {
+    if (thumbnail == null) return
 
-        Image(
-            bitmap = thumbnail.asImageBitmap(),
-            contentDescription = "Open the last photo",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
-                .clickable(onClick = onClick),
-        )
-    }
+    Image(
+        bitmap = thumbnail.asImageBitmap(),
+        contentDescription = "Open the last photo",
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .size(50.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .border(1.dp, Ink.Line, RoundedCornerShape(11.dp))
+            .clickable(onClick = onClick),
+    )
 }
 
 @Composable
@@ -536,100 +630,97 @@ private fun TimerButton(seconds: Int, enabled: Boolean, onChange: (Int) -> Unit)
         3 -> 10
         else -> 0
     }
+    val tint = if (seconds == 0) Ink.TextSecondary else Ink.Accent
 
-    Row(
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled) { onChange(next) }
             .alpha(if (enabled) 1f else 0.4f)
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
         Icon(
             imageVector = Icons.Filled.Timer,
             contentDescription = "Self timer",
-            tint = if (seconds == 0) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
-            modifier = Modifier.size(20.dp),
+            tint = tint,
+            modifier = Modifier.size(19.dp),
         )
+        Spacer(Modifier.height(3.dp))
         Text(
             text = if (seconds == 0) "off" else "${seconds}s",
-            style = MaterialTheme.typography.labelMedium,
-            color = if (seconds == 0) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
+            style = Type.ReadoutSmall,
+            color = tint,
         )
     }
 }
 
+/**
+ * The shutter: a fixed outer ring with a shape inside that changes state.
+ *
+ * A white disc means ready, an amber square means running and tapping it stops.
+ * Progress is drawn as an arc on the ring itself rather than as a separate bar,
+ * so the one thing worth watching during a two minute exposure is also the one
+ * thing under your thumb.
+ */
 @Composable
 private fun ShutterButton(state: UiState, onClick: () -> Unit) {
-    Box(contentAlignment = Alignment.Center) {
-        if (state.isCapturing) {
-            val progress = state.progress
-            if (progress != null) {
-                CircularProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.size(88.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = Color.White.copy(alpha = 0.15f),
-                    strokeWidth = 4.dp,
-                )
-            } else {
-                // Indefinite capture has no end to show progress toward, so the ring
-                // simply turns for as long as it runs.
-                CircularProgressIndicator(
-                    modifier = Modifier.size(88.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = Color.White.copy(alpha = 0.15f),
-                    strokeWidth = 4.dp,
+    val running = state.isCapturing
+    val counting = state.isCountingDown
+
+    val innerSize by animateDpAsState(if (running) 28.dp else 58.dp, label = "shutterSize")
+    val innerCorner by animateDpAsState(if (running) 7.dp else 29.dp, label = "shutterCorner")
+    val innerColor by animateColorAsState(
+        when {
+            running -> Ink.Danger
+            counting -> Ink.Accent
+            state.isBusy -> Ink.TextTertiary
+            else -> Color.White
+        },
+        label = "shutterColor",
+    )
+    val progress by animateFloatAsState(state.progress ?: 0f, label = "shutterProgress")
+
+    Box(
+        modifier = Modifier
+            .size(76.dp)
+            .clickable(
+                enabled = state.selected != null,
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = 2.5.dp.toPx()
+            val radius = (size.minDimension - stroke) / 2f
+
+            drawCircle(
+                color = Color.White.copy(alpha = 0.22f),
+                radius = radius,
+                style = Stroke(width = stroke),
+            )
+
+            if (running && state.progress != null) {
+                drawArc(
+                    color = Ink.Accent,
+                    startAngle = -90f,
+                    sweepAngle = 360f * progress,
+                    useCenter = false,
+                    topLeft = Offset(stroke / 2f, stroke / 2f),
+                    size = Size(size.width - stroke, size.height - stroke),
+                    style = Stroke(width = stroke, cap = androidx.compose.ui.graphics.StrokeCap.Round),
                 )
             }
         }
 
         Box(
             modifier = Modifier
-                .size(72.dp)
-                .clip(CircleShape)
-                .background(
-                    when {
-                        state.isCapturing || state.isCountingDown -> MaterialTheme.colorScheme.primary
-                        state.isBusy -> Color.White.copy(alpha = 0.2f)
-                        else -> Color.White
-                    }
-                )
-                .border(3.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                .clickable(enabled = state.selected != null, onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            val label = when {
-                state.isCapturing -> "STOP"
-                state.isCountingDown -> "CANCEL"
-                state.phase == Phase.Metering -> "…"
-                state.phase == Phase.Saving -> "SAVING"
-                else -> null
-            }
-
-            if (label != null) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontSize = if (label.length > 4) 10.sp else 13.sp,
-                    color = if (state.isCapturing || state.isCountingDown) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        Color.Black
-                    },
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
+                .size(innerSize)
+                .clip(RoundedCornerShape(innerCorner))
+                .background(innerColor),
+        )
     }
 }
 

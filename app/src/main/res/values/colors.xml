@@ -1,3 +1,5 @@
 <resources>
-    <color name="ic_launcher_background">#0B1026</color>
+    <!-- Matches Ink.Background in the app's theme, so the icon and the first
+         frame after launch are the same colour. -->
+    <color name="ic_launcher_background">#0A0C11</color>
 </resources>
