@@ -53,10 +53,16 @@ Everything it decided is shown on screen before you shoot, in plain terms.
 1. Prop the phone against something solid, or use a tripod. Any movement during a
    capture is the one thing stacking cannot fix.
 2. Pick a camera (Main or Ultra-wide) and a duration.
-3. Check focus — it starts at infinity, which is usually right. The slider is
-   there for the times it isn't.
-4. Tap **SHOOT**. For Indefinite, tap **STOP** when you have had enough; the
-   frames already gathered are a finished photograph, nothing is discarded.
+3. Check focus under the **tune** button — it starts at infinity, which is usually
+   right. The slider is there for the times it isn't.
+4. Tap the shutter. A **3 second self-timer** runs first so the wobble from your
+   finger is gone before the sensor opens; tap again to cancel, or use the timer
+   button to change it. For Indefinite, tap **STOP** when you have had enough —
+   the frames already gathered are a finished photograph, nothing is discarded.
+
+While a capture runs, the readout shows frames done, elapsed time, the shutter
+speed the sensor **actually** used, and how far the sky has drifted. The last shot
+appears as a thumbnail next to the shutter; tap it to open the photo.
 
 Photos are saved to `Pictures/DeepSkyCamera` and appear in your gallery. The
 filename records the recipe — `DSC_20260812_224310_30s_67f_ISO3200.jpg`.

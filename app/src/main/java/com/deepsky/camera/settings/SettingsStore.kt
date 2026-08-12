@@ -29,6 +29,14 @@ data class Settings(
     val evOffset: Float = 0f,
     val cameraId: String = "",
     val focusDiopters: Float = 0f,
+    /**
+     * Seconds to wait after the shutter is tapped before the sensor starts.
+     *
+     * Tapping a phone resting on a wall moves it, and the wobble outlasts the tap
+     * by a second or more. Three seconds of nothing is the cheapest sharpness
+     * available, which is why it is the default rather than an option to discover.
+     */
+    val timerSeconds: Int = 3,
 )
 
 class SettingsStore(private val context: Context) {
@@ -41,6 +49,7 @@ class SettingsStore(private val context: Context) {
             evOffset = preferences[EV_OFFSET] ?: 0f,
             cameraId = preferences[CAMERA_ID] ?: "",
             focusDiopters = preferences[FOCUS_DIOPTERS] ?: 0f,
+            timerSeconds = preferences[TIMER_SECONDS] ?: 3,
         )
     }
 
@@ -50,6 +59,7 @@ class SettingsStore(private val context: Context) {
     suspend fun setEvOffset(value: Float) = edit { it[EV_OFFSET] = value }
     suspend fun setCameraId(value: String) = edit { it[CAMERA_ID] = value }
     suspend fun setFocusDiopters(value: Float) = edit { it[FOCUS_DIOPTERS] = value }
+    suspend fun setTimerSeconds(value: Int) = edit { it[TIMER_SECONDS] = value }
 
     private suspend fun edit(block: (androidx.datastore.preferences.core.MutablePreferences) -> Unit) {
         context.dataStore.edit(block)
@@ -62,5 +72,6 @@ class SettingsStore(private val context: Context) {
         val EV_OFFSET = floatPreferencesKey("ev_offset")
         val CAMERA_ID = stringPreferencesKey("camera_id")
         val FOCUS_DIOPTERS = floatPreferencesKey("focus_diopters")
+        val TIMER_SECONDS = androidx.datastore.preferences.core.intPreferencesKey("timer_seconds")
     }
 }

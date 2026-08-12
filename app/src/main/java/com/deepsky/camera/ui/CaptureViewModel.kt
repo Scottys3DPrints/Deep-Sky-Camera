@@ -46,12 +46,21 @@ data class UiState(
     val framesDone: Int = 0,
     val elapsedMs: Long = 0L,
     val alignShift: Pair<Int, Int> = 0 to 0,
+    /** What the sensor actually delivered, which is not always what was asked. */
+    val honouredExposureNs: Long? = null,
+    val honouredIso: Int? = null,
     val lastSavedName: String? = null,
+    val lastSavedUri: android.net.Uri? = null,
+    val thumbnail: android.graphics.Bitmap? = null,
+    /** Seconds left on the self-timer, or null when it is not running. */
+    val countdown: Int? = null,
     val message: String? = null,
     val settings: Settings = Settings(),
     val update: UpdateState = UpdateState.Idle,
 ) {
     val isCapturing: Boolean get() = phase == Phase.Capturing
+    val isCountingDown: Boolean get() = countdown != null
+    val isBusy: Boolean get() = phase == Phase.Metering || phase == Phase.Saving
 
     /** 0..1, or null when the capture has no fixed end. */
     val progress: Float?
@@ -181,12 +190,24 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
     // ----------------------------------------------------------------- shutter
 
+    private var shutterJob: Job? = null
+
     fun onShutter() {
         val current = _state.value
+
+        // One button, three meanings, in the order you reach for them: stop a
+        // running capture, abandon a countdown, or begin.
         if (current.isCapturing) {
             controller.stopCapture()
             return
         }
+        if (current.isCountingDown) {
+            shutterJob?.cancel()
+            _state.value = _state.value.copy(countdown = null, message = null)
+            return
+        }
+        if (current.isBusy) return
+
         val camera = current.selected ?: return
         if (!camera.supportsManual) {
             _state.value = current.copy(
@@ -195,10 +216,22 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        viewModelScope.launch {
-            // Re-meter immediately before the exposure. The sky the app measured
-            // when it opened may be minutes old by now, and clouds move.
-            _state.value = _state.value.copy(phase = Phase.Metering, message = null)
+        shutterJob = viewModelScope.launch {
+            _state.value = _state.value.copy(message = null, honouredExposureNs = null)
+
+            // Hands off the phone before the sensor opens. The wobble from tapping
+            // a phone propped against a wall lasts well over a second, and it would
+            // otherwise land in the first frames of the stack.
+            val timer = _state.value.settings.timerSeconds
+            for (remaining in timer downTo 1) {
+                _state.value = _state.value.copy(countdown = remaining)
+                delay(1000)
+            }
+            _state.value = _state.value.copy(countdown = null)
+
+            // Re-meter immediately before the exposure. The sky measured when the
+            // app opened may be minutes old by now, and clouds move.
+            _state.value = _state.value.copy(phase = Phase.Metering)
             metering = controller.meter()
             replan()
 
@@ -236,6 +269,10 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
+    override fun onExposureConfirmed(exposureNs: Long, iso: Int) {
+        _state.value = _state.value.copy(honouredExposureNs = exposureNs, honouredIso = iso)
+    }
+
     override fun onCaptureComplete(jpeg: ByteArray?, frames: Int, integrationMs: Long) {
         timerJob?.cancel()
         val camera = _state.value.selected
@@ -268,7 +305,8 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     _state.value.copy(
                         phase = Phase.Ready,
                         lastSavedName = it.displayName,
-                        message = "Saved $frames frames — " +
+                        lastSavedUri = it.uri,
+                        message = "Saved — $frames frames, " +
                             "${"%.1f".format(integrationMs / 1000.0)} s of light",
                     )
                 },
@@ -279,8 +317,30 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                     )
                 },
             )
+
+            // A thumbnail of what was actually written to the gallery, not of what
+            // we hoped we wrote. If the file is unreadable this comes back null and
+            // the absence of a preview is itself the warning.
+            saved.getOrNull()?.let { result ->
+                val thumbnail = withContext(Dispatchers.IO) { decodeThumbnail(jpeg) }
+                _state.value = _state.value.copy(thumbnail = thumbnail)
+            }
         }
     }
+
+    /** Small enough to hold onto between shots without a second thought. */
+    private fun decodeThumbnail(jpeg: ByteArray): android.graphics.Bitmap? = runCatching {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, bounds)
+
+        var sample = 1
+        while (bounds.outWidth / sample > 256) sample *= 2
+
+        android.graphics.BitmapFactory.decodeByteArray(
+            jpeg, 0, jpeg.size,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+        )
+    }.getOrNull()
 
     override fun onError(message: String) {
         timerJob?.cancel()
@@ -300,6 +360,10 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
 
     fun setFocusDiopters(value: Float) = viewModelScope.launch {
         settingsStore.setFocusDiopters(value)
+    }
+
+    fun setTimerSeconds(value: Int) = viewModelScope.launch {
+        settingsStore.setTimerSeconds(value)
     }
 
     // ----------------------------------------------------------------- updates

@@ -117,7 +117,20 @@ private fun AppRoot() {
             onShutter = viewModel::onShutter,
             onFocusChange = viewModel::setFocusDiopters,
             onEvChange = viewModel::setEvOffset,
+            onTimerChange = viewModel::setTimerSeconds,
             onOpenSettings = { showSettings = true },
+            onOpenLastPhoto = {
+                state.lastSavedUri?.let { uri ->
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, "image/jpeg")
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                        )
+                    }
+                }
+            },
             onDismissMessage = viewModel::dismissMessage,
         )
     }
