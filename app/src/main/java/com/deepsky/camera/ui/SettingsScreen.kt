@@ -252,9 +252,14 @@ private fun CameraFacts(camera: AstroCamera) {
                 color = Ink.TextPrimary,
             )
             Spacer(Modifier.weight(1f))
+            // The badge answers the only question that decides whether this camera
+            // is usable at all: can it be told its own exposure. The hardware tier
+            // sits below with the other specifications — this phone's ultra-wide
+            // reports LIMITED yet still accepts full manual sensor control, so
+            // leading with the tier read as a warning about a camera that works.
             Text(
-                text = if (camera.supportsManual) camera.hardwareLevelName else "no manual control",
-                style = Type.ReadoutSmall,
+                text = if (camera.supportsManual) "MANUAL" else "NO MANUAL CONTROL",
+                style = Type.Overline,
                 color = if (camera.supportsManual) Ink.Accent else Ink.TextTertiary,
             )
         }
@@ -262,6 +267,7 @@ private fun CameraFacts(camera: AstroCamera) {
 
         FactRow("Longest frame", CapturePlan.formatSeconds(camera.maxExposureNs))
         FactRow("ISO range", "${camera.minIso}–${camera.maxIso}")
+        FactRow("Hardware tier", camera.hardwareLevelName)
         FactRow(
             "Lens",
             String.format(java.util.Locale.US, "%.2f mm  f/%.1f", camera.focalLengthMm, camera.apertureF),

@@ -8,6 +8,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,12 +32,11 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -48,7 +49,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.deepsky.camera.camera.AstroCamera
@@ -557,52 +560,113 @@ private fun TuningPanel(
         // the sky, but phone lenses vary enough to want a nudge.
         TuningSlider(
             name = "Focus",
-            value = if (focusValue <= 0.01f) "∞" else String.format(java.util.Locale.US, "%.2f", focusValue),
-            position = focusValue,
+            readout = if (focusValue <= 0.01f) {
+                "∞"
+            } else {
+                String.format(java.util.Locale.US, "%.2f", focusValue)
+            },
+            value = focusValue,
             range = 0f..1.5f,
             onValueChange = { focusValue = it },
             onSettled = { onFocusChange(focusValue) },
         )
         TuningSlider(
             name = "Bright",
-            value = String.format(java.util.Locale.US, "%+.1f EV", evValue),
-            position = evValue,
+            readout = String.format(java.util.Locale.US, "%+.1f EV", evValue),
+            value = evValue,
             range = -3f..3f,
+            bipolar = true,
             onValueChange = { evValue = it },
             onSettled = { onEvChange(evValue) },
         )
     }
 }
 
+/**
+ * A hand-drawn rail rather than the Material slider.
+ *
+ * The stock component now renders a bar-shaped thumb and a "stop indicator" dot
+ * parked at the end of the track, which on a dark panel reads as a stray artifact
+ * rather than a control. It also always fills from the left, which is wrong for
+ * exposure compensation: zero is the middle of that range, and a bar stretching
+ * from the far left to the centre implies a setting well above nothing when it
+ * means exactly nothing. Fill anchored to the centre for [bipolar] controls says
+ * which way and how far you have pushed it.
+ */
 @Composable
 private fun TuningSlider(
     name: String,
-    value: String,
-    position: Float,
+    readout: String,
+    value: Float,
     range: ClosedFloatingPointRange<Float>,
+    bipolar: Boolean = false,
     onValueChange: (Float) -> Unit,
     onSettled: () -> Unit,
 ) {
-    Column {
+    var trackWidth by remember { mutableIntStateOf(1) }
+    val span = range.endInclusive - range.start
+    val fraction = ((value - range.start) / span).coerceIn(0f, 1f)
+
+    fun emitAt(x: Float) {
+        val position = (x / trackWidth.toFloat()).coerceIn(0f, 1f)
+        onValueChange(range.start + position * span)
+    }
+
+    Column(modifier = Modifier.padding(vertical = 5.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(name, style = Type.Caption, color = Ink.TextSecondary)
-            Text(value, style = Type.ReadoutSmall, color = Ink.TextPrimary)
+            Text(readout, style = Type.ReadoutSmall, color = Ink.TextPrimary)
         }
-        Slider(
-            value = position,
-            onValueChange = onValueChange,
-            onValueChangeFinished = onSettled,
-            valueRange = range,
-            colors = SliderDefaults.colors(
-                thumbColor = Ink.Accent,
-                activeTrackColor = Ink.Accent,
-                inactiveTrackColor = Ink.Line,
-            ),
-            modifier = Modifier.height(28.dp),
-        )
+
+        Spacer(Modifier.height(4.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(26.dp)
+                .onSizeChanged { trackWidth = it.width.coerceAtLeast(1) }
+                .pointerInput(range) {
+                    detectTapGestures { offset ->
+                        emitAt(offset.x)
+                        onSettled()
+                    }
+                }
+                .pointerInput(range) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = onSettled,
+                        onDragCancel = onSettled,
+                    ) { change, _ -> emitAt(change.position.x) }
+                },
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                val centreY = size.height / 2f
+                val thickness = 3.dp.toPx()
+                val thumbX = fraction * size.width
+
+                drawLine(
+                    color = Ink.Line,
+                    start = Offset(0f, centreY),
+                    end = Offset(size.width, centreY),
+                    strokeWidth = thickness,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+                drawLine(
+                    color = Ink.Accent,
+                    start = Offset(if (bipolar) size.width / 2f else 0f, centreY),
+                    end = Offset(thumbX, centreY),
+                    strokeWidth = thickness,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+                drawCircle(
+                    color = Ink.Accent,
+                    radius = 6.5.dp.toPx(),
+                    center = Offset(thumbX, centreY),
+                )
+            }
+        }
     }
 }
 
