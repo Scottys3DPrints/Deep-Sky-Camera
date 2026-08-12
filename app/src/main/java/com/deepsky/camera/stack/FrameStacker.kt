@@ -25,16 +25,36 @@ class FrameStacker(
     val height: Int,
     /** Whether to compensate for the sky drifting across the sensor. */
     private val alignFrames: Boolean = true,
+    /**
+     * Pixels trimmed from every edge of the finished image.
+     *
+     * Measured on this phone, the outermost rows and columns read roughly 30%
+     * brighter than the frame's interior — sensor border pixels and amplifier glow,
+     * invisible in a daylight photograph and glaring once a stacked night sky is
+     * stretched. Alignment adds to it: shifted frames clamp at the edge, so the
+     * outermost pixels get repeated rather than averaged. Cropping is what every
+     * astrophotography workflow does with these, and a few dozen pixels off a
+     * twelve megapixel frame costs nothing.
+     */
+    private val margin: Int = 0,
 ) {
     init {
         require(width > 0 && height > 0) { "Frame size must be positive" }
         require(width % 2 == 0 && height % 2 == 0) {
             "4:2:0 chroma needs even dimensions; got ${width}x$height"
         }
+        require(margin >= 0 && margin % 2 == 0) { "Margin must be even and non-negative" }
+        require(width - 2 * margin > 0 && height - 2 * margin > 0) {
+            "Margin of $margin leaves nothing of a ${width}x$height frame"
+        }
     }
 
     val chromaWidth = width / 2
     val chromaHeight = height / 2
+
+    /** Size of the image this stacker will actually hand back. */
+    val outputWidth = width - 2 * margin
+    val outputHeight = height - 2 * margin
 
     // 32-bit accumulators, full frame. At sixteen megapixels this is 96 MB held
     // for the whole capture, which is why the app asks for a large heap. Summing
@@ -124,18 +144,31 @@ class FrameStacker(
         val frames = frameCount
         if (frames == 0) return null
 
-        val nv21 = ByteArray(width * height + chromaWidth * chromaHeight * 2)
+        val outputChromaWidth = outputWidth / 2
+        val outputChromaHeight = outputHeight / 2
+        val lumaSize = outputWidth * outputHeight
+        val nv21 = ByteArray(lumaSize + outputChromaWidth * outputChromaHeight * 2)
 
-        for (i in yAccumulator.indices) {
-            nv21[i] = (yAccumulator[i] / frames).coerceIn(0, 255).toByte()
+        for (y in 0 until outputHeight) {
+            val sourceRow = (y + margin) * width + margin
+            val targetRow = y * outputWidth
+            for (x in 0 until outputWidth) {
+                nv21[targetRow + x] = (yAccumulator[sourceRow + x] / frames).coerceIn(0, 255).toByte()
+            }
         }
 
-        if (autoStretch) stretchLuma(nv21, width * height)
+        // Stretched after cropping, deliberately. The bright border would otherwise
+        // set the white point and hold the rest of the picture down.
+        if (autoStretch) stretchLuma(nv21, lumaSize)
 
-        var out = width * height
-        for (i in 0 until chromaWidth * chromaHeight) {
-            nv21[out++] = (vAccumulator[i] / frames).coerceIn(0, 255).toByte()
-            nv21[out++] = (uAccumulator[i] / frames).coerceIn(0, 255).toByte()
+        val chromaMargin = margin / 2
+        var out = lumaSize
+        for (y in 0 until outputChromaHeight) {
+            val sourceRow = (y + chromaMargin) * chromaWidth + chromaMargin
+            for (x in 0 until outputChromaWidth) {
+                nv21[out++] = (vAccumulator[sourceRow + x] / frames).coerceIn(0, 255).toByte()
+                nv21[out++] = (uAccumulator[sourceRow + x] / frames).coerceIn(0, 255).toByte()
+            }
         }
 
         return nv21
@@ -160,7 +193,14 @@ class FrameStacker(
 
         // A lookup table keeps the per-pixel cost to one array read rather than a
         // division and a power across sixteen million pixels.
-        val scale = 245f / (whitePoint - blackPoint)
+        //
+        // The gain is capped. Without a ceiling, a frame containing nothing but
+        // sensor noise — a covered lens, a completely overcast sky — has a tiny
+        // histogram spread, and the stretch dutifully amplifies that noise across
+        // the whole range and hands back grey mush that looks like a fault. Eight
+        // stops of lift is far more than a real sky needs and keeps an empty frame
+        // looking empty.
+        val scale = (245f / (whitePoint - blackPoint)).coerceAtMost(MAX_STRETCH_GAIN)
         val lut = ByteArray(256)
         for (value in 0..255) {
             val linear = ((value - blackPoint) * scale).coerceIn(0f, 255f)
@@ -344,5 +384,8 @@ class FrameStacker(
 
         /** Fewer bright points than this is not a star field worth aligning to. */
         const val MIN_STARS = 6
+
+        /** Ceiling on auto-stretch, so an empty frame is not amplified into mush. */
+        const val MAX_STRETCH_GAIN = 8f
     }
 }

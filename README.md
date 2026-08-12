@@ -37,9 +37,9 @@ You choose a duration. The app decides:
 
 | Setting | How it is chosen |
 | --- | --- |
-| Shutter per frame | The longest the sensor allows, or the longest before stars trail — whichever is shorter |
+| Shutter per frame | The longest the sensor allows, or the longest before stars trail — whichever is shorter. Cut shorter still if the scene is too bright for that even at base ISO, so pointing it at a daylit room gives a photograph rather than a white rectangle |
+| Frame count | However many reach the duration you asked for, capped at 100 — a short shutter would otherwise plan hundreds of frames and take a minute over a "10 s" capture |
 | ISO | Metered off the actual sky, then rebalanced for the shutter length it settled on |
-| Frame count | However many it takes to reach the duration you asked for |
 | Focus | Fixed at infinity — autofocus cannot lock onto a star and will ruin the frame |
 | White balance | Locked, so colour cannot drift between frames being added together |
 | Stabilisation | Off — it hunts on a tripod and shifts the field between frames |
@@ -106,6 +106,14 @@ only way forward would be uninstalling it.
 and publish a release the app can then find on its own.
 
 ## Honest limits
+
+- The outer 32 pixels are cropped from every edge. Measured on this phone, the
+  outermost rows and columns read about 30% brighter than the interior — sensor
+  border and amplifier glow, invisible in daylight and glaring once a stacked sky
+  is stretched.
+- **Auto-rotate is off on this phone**, so Android reports portrait however the
+  phone is physically lying, and photos are saved assuming you held it upright in
+  portrait. Prop it sideways and the photo comes out sideways.
 
 - Alignment corrects **translation only**. It cannot correct the field rotation
   that shows up over very long captures, so an hour-long indefinite stack will

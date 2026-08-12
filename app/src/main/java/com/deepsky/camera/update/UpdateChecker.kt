@@ -160,7 +160,11 @@ class UpdateChecker(private val context: Context) {
                 digest.update(buffer, 0, count)
             }
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
+        // Locale.ROOT is not decoration here: formatted without it, this follows the
+        // phone's locale, and a device set to a language with its own numerals would
+        // produce a hash that never matches the manifest — every update refused, for
+        // a reason nothing in the error would explain.
+        return digest.digest().joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
     }
 
     companion object {

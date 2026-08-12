@@ -91,6 +91,7 @@ fun CameraScreen(
         if (camera != null) {
             CameraPreview(
                 previewSize = camera.previewSize,
+                sensorOrientation = camera.sensorOrientation,
                 onSurfaceReady = onSurfaceReady,
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -410,7 +411,9 @@ private fun PlanSummary(plan: CapturePlan?) {
         val total = when {
             plan.mode == CaptureMode.SINGLE -> ""
             plan.mode.isIndefinite -> "  ·  until you stop"
-            else -> "  ·  %.0f s total".format(plan.plannedIntegrationMs / 1000.0)
+            else -> String.format(
+                java.util.Locale.US, "  ·  %.0f s total", plan.plannedIntegrationMs / 1000.0,
+            )
         }
 
         Text(
@@ -421,14 +424,20 @@ private fun PlanSummary(plan: CapturePlan?) {
         )
 
         Text(
-            text = when {
-                plan.mode == CaptureMode.SINGLE -> "One frame, no stacking"
-                plan.limitedBy == ExposureLimit.HARDWARE ->
-                    "${CapturePlan.formatSeconds(plan.subExposureNs)} is the longest single " +
-                        "frame this sensor allows — the rest comes from stacking"
-                else ->
+            text = when (plan.limitedBy) {
+                ExposureLimit.SCENE_BRIGHTNESS ->
+                    "Too bright for a night exposure — shutter cut to " +
+                        "${CapturePlan.formatSeconds(plan.subExposureNs)} so it does not blow out"
+                ExposureLimit.STAR_TRAILING ->
                     "Held to ${CapturePlan.formatSeconds(plan.subExposureNs)} per frame " +
                         "so the stars stay points, not streaks"
+                ExposureLimit.HARDWARE ->
+                    if (plan.mode == CaptureMode.SINGLE) {
+                        "One frame, no stacking"
+                    } else {
+                        "${CapturePlan.formatSeconds(plan.subExposureNs)} is the longest single " +
+                            "frame this sensor allows — the rest comes from stacking"
+                    }
             },
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -452,14 +461,18 @@ private fun TuningPanel(
         // lock onto a star, so it is set by hand and starts at infinity — right for
         // the sky, but phone lenses vary enough to want a nudge.
         SliderRow(
-            label = if (focusValue <= 0.01f) "Focus  ∞" else "Focus  %.2f".format(focusValue),
+            label = if (focusValue <= 0.01f) {
+                "Focus  ∞"
+            } else {
+                String.format(java.util.Locale.US, "Focus  %.2f", focusValue)
+            },
             value = focusValue,
             range = 0f..1.5f,
             onValueChange = { focusValue = it },
             onValueChangeFinished = { onFocusChange(focusValue) },
         )
         SliderRow(
-            label = "Bright  %+.1f EV".format(evValue),
+            label = String.format(java.util.Locale.US, "Bright  %+.1f EV", evValue),
             value = evValue,
             range = -3f..3f,
             onValueChange = { evValue = it },
@@ -622,5 +635,5 @@ private fun ShutterButton(state: UiState, onClick: () -> Unit) {
 
 private fun formatElapsed(millis: Long): String {
     val totalSeconds = millis / 1000
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+    return String.format(java.util.Locale.US, "%d:%02d", totalSeconds / 60, totalSeconds % 60)
 }

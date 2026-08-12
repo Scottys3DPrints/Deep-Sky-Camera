@@ -20,9 +20,12 @@ import kotlin.math.roundToInt
  */
 enum class CaptureMode(val label: String, val targetIntegrationMs: Long) {
     SINGLE("Single", 0L),
-    TEN_SECONDS("10 sec", 10_000L),
-    THIRTY_SECONDS("30 sec", 30_000L),
-    INDEFINITE("Indefinite", Long.MAX_VALUE);
+    TEN_SECONDS("10 s", 10_000L),
+    THIRTY_SECONDS("30 s", 30_000L),
+    // Short enough that all four fit across a phone without the last one being
+    // pushed off the edge, and "∞" is the same convention a bulb setting uses.
+    // The line above the buttons spells out what it means.
+    INDEFINITE("∞", Long.MAX_VALUE);
 
     val isIndefinite: Boolean get() = this == INDEFINITE
 }
@@ -57,6 +60,12 @@ enum class ExposureLimit {
 
     /** Longer would smear stars into arcs as the sky rotates. */
     STAR_TRAILING,
+
+    /**
+     * The scene is too bright for the longest frame the sensor allows, even at its
+     * lowest ISO, so the shutter was shortened instead.
+     */
+    SCENE_BRIGHTNESS,
 }
 
 data class CapturePlan(
@@ -80,10 +89,18 @@ data class CapturePlan(
     }
 
     companion object {
+        /**
+         * Always formatted in Latin digits.
+         *
+         * Without an explicit locale this follows the phone's, and on a device set
+         * to Persian the readouts came back as "۰٫۶۷ s" — correct, and unreadable
+         * next to the Latin numerals everywhere else in the app. Camera settings
+         * are notation, not prose.
+         */
         fun formatSeconds(ns: Long): String {
             val seconds = ns / 1_000_000_000.0
-            return if (seconds >= 1.0) String.format("%.1f s", seconds)
-            else String.format("%.2f s", seconds)
+            return if (seconds >= 1.0) String.format(java.util.Locale.US, "%.1f s", seconds)
+            else String.format(java.util.Locale.US, "%.2f s", seconds)
         }
     }
 }
@@ -96,6 +113,22 @@ data class CapturePlan(
  * to and what the sky will tolerate.
  */
 object CapturePlanner {
+
+    /**
+     * Ceiling on how many frames one stack may gather.
+     *
+     * Frame count is total time divided by shutter length, and when the shutter is
+     * short that division runs away: a daylight test asked for ten seconds, got a
+     * 22 ms shutter, and dutifully planned 455 frames — which took forty-four
+     * seconds to shoot and stack. A capture labelled "10 s" must not take the best
+     * part of a minute.
+     *
+     * The cost of the cap is nil where it matters. On a dark sky the shutter sits at
+     * the sensor's maximum, so thirty seconds needs 67 frames and this never binds.
+     * It only engages when frames are short, which is to say when the scene is
+     * bright enough that stacking had little left to offer anyway.
+     */
+    const val MAX_STACK_FRAMES = 100
 
     /**
      * Longest single exposure before stars visibly trail, by the NPF rule:
@@ -129,15 +162,31 @@ object CapturePlanner {
         // Long frames beat many short ones: every frame carries its own read
         // noise, so fewer, longer frames is a cleaner stack for the same total.
         val hardwareLimit = camera.maxExposureNs
-        val subExposure = minOf(hardwareLimit, trailLimit)
+        var subExposure = minOf(hardwareLimit, trailLimit)
             .coerceAtLeast(camera.minExposureNs)
 
-        val limitedBy =
+        var limitedBy =
             if (trailLimit < hardwareLimit) ExposureLimit.STAR_TRAILING else ExposureLimit.HARDWARE
 
         // Re-spend the metered light across the shutter length we settled on: a
         // shorter frame than the meter assumed has to buy the difference in ISO.
-        val requestedIso = (metering.lightBudget / subExposure) * 2.0.pow(evOffset.toDouble())
+        var requestedIso = (metering.lightBudget / subExposure) * 2.0.pow(evOffset.toDouble())
+
+        // If the scene needs *less* light than base ISO at this shutter can give,
+        // there is nothing left to turn down and the frame blows out to white.
+        //
+        // This is not a theoretical case. It is what happens the first time anyone
+        // opens the app indoors or before dusk to see what it does, and handing them
+        // a white rectangle reads as a broken app rather than as "too bright for a
+        // night-sky exposure". Shortening the shutter keeps it honest in any light;
+        // on an actually dark sky the branch never runs.
+        if (requestedIso < camera.minIso) {
+            val shortened = (subExposure * (requestedIso / camera.minIso)).toLong()
+            subExposure = shortened.coerceIn(camera.minExposureNs, hardwareLimit)
+            requestedIso = camera.minIso.toDouble()
+            limitedBy = ExposureLimit.SCENE_BRIGHTNESS
+        }
+
         val iso = requestedIso.roundToInt().coerceIn(camera.minIso, camera.maxIso)
 
         val frameCount = when {
@@ -145,7 +194,8 @@ object CapturePlanner {
             mode.isIndefinite -> Int.MAX_VALUE
             else -> {
                 val subMs = (subExposure / 1_000_000L).coerceAtLeast(1L)
-                ceil(mode.targetIntegrationMs.toDouble() / subMs).toInt().coerceAtLeast(1)
+                val needed = ceil(mode.targetIntegrationMs.toDouble() / subMs).toInt()
+                needed.coerceIn(1, MAX_STACK_FRAMES)
             }
         }
 

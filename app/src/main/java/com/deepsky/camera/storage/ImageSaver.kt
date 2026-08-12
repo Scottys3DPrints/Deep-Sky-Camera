@@ -194,7 +194,9 @@ object ImageSaver {
             exif.setAttribute(ExifInterface.TAG_SOFTWARE, "Deep Sky Camera")
             exif.setAttribute(
                 ExifInterface.TAG_IMAGE_DESCRIPTION,
-                "Stack of $frames frames, ${"%.1f".format(integrationMs / 1000.0)} s total integration",
+                "Stack of $frames frames, " + String.format(
+                    Locale.US, "%.1f s total integration", integrationMs / 1000.0,
+                ),
             )
             exif.saveAttributes()
         }.onFailure {

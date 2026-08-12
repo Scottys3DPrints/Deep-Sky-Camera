@@ -281,6 +281,55 @@ class FrameStackerTest {
     }
 
     @Test
+    fun `the bright sensor border is cropped away`() {
+        // The outermost rows and columns of this sensor read far brighter than the
+        // frame's interior. Harmless in daylight, glaring once a stacked sky is
+        // stretched — so they must not reach the finished picture.
+        val margin = 8
+        val luma = ByteArray(width * height) { index ->
+            val x = index % width
+            val y = index / width
+            val onBorder = x < margin || y < margin || x >= width - margin || y >= height - margin
+            (if (onBorder) 220 else 50).toByte()
+        }
+
+        val (y, u, v) = planes(luma, flat(width * height / 4, 128), flat(width * height / 4, 128))
+        val stacker = FrameStacker(width, height, alignFrames = false, margin = margin)
+        stacker.add(y, u, v)
+
+        assertEquals(width - 2 * margin, stacker.outputWidth)
+        assertEquals(height - 2 * margin, stacker.outputHeight)
+
+        val nv21 = stacker.averageToNv21(autoStretch = false)!!
+        val lumaSize = stacker.outputWidth * stacker.outputHeight
+        assertEquals(lumaSize * 3 / 2, nv21.size)
+
+        for (i in 0 until lumaSize) {
+            assertEquals("border pixel survived the crop at $i", 50, nv21.at(i))
+        }
+    }
+
+    @Test
+    fun `an empty frame is not amplified into grey mush`() {
+        // A covered lens or a solid overcast sky gives a histogram a few levels
+        // wide. Stretched without a ceiling that becomes a full-range grey field
+        // that reads as a broken photograph rather than an empty one.
+        val luma = ByteArray(width * height) { (10 + (it % 3)).toByte() }
+        val (y, u, v) = planes(luma, flat(width * height / 4, 128), flat(width * height / 4, 128))
+
+        val stacker = FrameStacker(width, height, alignFrames = false)
+        stacker.add(y, u, v)
+
+        val stretched = stacker.averageToNv21(autoStretch = true)!!.copyOf(width * height)
+        val brightest = stretched.maxOf { it.toInt() and 0xFF }
+
+        assertTrue(
+            "an empty frame was amplified to $brightest; it should stay dark",
+            brightest < 128,
+        )
+    }
+
+    @Test
     fun `stacking does not disturb the caller's buffer positions`() {
         // Two views onto one chroma buffer are read concurrently in the real
         // pipeline. Any position-based read would leave the other view pointing

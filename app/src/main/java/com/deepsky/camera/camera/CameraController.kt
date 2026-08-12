@@ -277,7 +277,12 @@ class CameraController(private val context: Context) {
         val preview = previewSurface
 
         this.autoStretch = autoStretch
-        stacker = FrameStacker(camera.captureSize.width, camera.captureSize.height, alignFrames)
+        stacker = FrameStacker(
+            width = camera.captureSize.width,
+            height = camera.captureSize.height,
+            alignFrames = alignFrames,
+            margin = EDGE_CROP_PX,
+        )
         framesTarget = plan.frameCount
         framesSeen = 0
         captureStartedAt = System.currentTimeMillis()
@@ -409,7 +414,7 @@ class CameraController(private val context: Context) {
         handler?.post {
             val jpeg = runCatching {
                 stacker?.averageToNv21(autoStretch)?.let {
-                    JpegEncoder.encode(it, stacker.width, stacker.height)
+                    JpegEncoder.encode(it, stacker.outputWidth, stacker.outputHeight)
                 }
             }.onFailure { Log.e(TAG, "Encoding the stack failed", it) }.getOrNull()
 
@@ -479,5 +484,12 @@ class CameraController(private val context: Context) {
         const val METERING_FRAMES = 8
         const val METERING_TIMEOUT_MS = 4_000L
         const val WARMUP_FRAMES = 1
+
+        /**
+         * Trimmed from every edge of the finished photograph. Measured on this
+         * phone: the outer ~25 rows and ~20 columns read about 30% brighter than
+         * the interior once a stack is stretched.
+         */
+        const val EDGE_CROP_PX = 32
     }
 }

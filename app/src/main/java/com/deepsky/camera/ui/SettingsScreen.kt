@@ -244,9 +244,14 @@ private fun CameraFacts(camera: AstroCamera) {
         )
         Fact("Longest single frame", CapturePlan.formatSeconds(camera.maxExposureNs))
         Fact("ISO range", "${camera.minIso} – ${camera.maxIso}")
-        Fact("Lens", "%.2f mm f/%.1f".format(camera.focalLengthMm, camera.apertureF))
+        Fact(
+            "Lens",
+            String.format(
+                java.util.Locale.US, "%.2f mm f/%.1f", camera.focalLengthMm, camera.apertureF,
+            ),
+        )
         Fact("Capture size", "${camera.captureSize.width} × ${camera.captureSize.height}")
-        Fact("Pixel pitch", "%.2f µm".format(camera.pixelPitchUm))
+        Fact("Pixel pitch", String.format(java.util.Locale.US, "%.2f µm", camera.pixelPitchUm))
         Fact("Manual control", if (camera.supportsManual) camera.hardwareLevelName else "not available")
     }
 }

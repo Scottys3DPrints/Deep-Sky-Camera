@@ -306,8 +306,9 @@ class CaptureViewModel(application: Application) : AndroidViewModel(application)
                         phase = Phase.Ready,
                         lastSavedName = it.displayName,
                         lastSavedUri = it.uri,
-                        message = "Saved — $frames frames, " +
-                            "${"%.1f".format(integrationMs / 1000.0)} s of light",
+                        message = "Saved — $frames frames, " + String.format(
+                            java.util.Locale.US, "%.1f s of light", integrationMs / 1000.0,
+                        ),
                     )
                 },
                 onFailure = {

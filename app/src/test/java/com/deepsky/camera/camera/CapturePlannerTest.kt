@@ -108,6 +108,64 @@ class CapturePlannerTest {
     }
 
     @Test
+    fun `a bright scene shortens the shutter instead of blowing out`() {
+        // Measured indoors in daylight: the meter asked for 0.02 s at ISO 67. Held
+        // at the sensor's longest frame that is far past base ISO, and every photo
+        // came back a white rectangle — which is what anyone opening the app before
+        // dusk would see and reasonably call broken.
+        val daylight = SceneMetering(exposureNs = 20_000_000L, iso = 67)
+        val plan = CapturePlanner.plan(mainCamera, CaptureMode.TEN_SECONDS, daylight)
+
+        assertEquals(ExposureLimit.SCENE_BRIGHTNESS, plan.limitedBy)
+        assertEquals(mainCamera.minIso, plan.iso)
+        assertTrue(
+            "shutter should have been cut well below the hardware maximum",
+            plan.subExposureNs < mainCamera.maxExposureNs,
+        )
+
+        // The whole point is that the exposure still lands correctly: shutter times
+        // ISO must still equal the light the meter asked for.
+        val delivered = plan.subExposureNs.toDouble() * plan.iso
+        assertEquals(daylight.lightBudget, delivered, daylight.lightBudget * 0.05)
+    }
+
+    @Test
+    fun `a short shutter cannot run the frame count away`() {
+        // Measured: a daylight scene gave a 22 ms shutter, and ten seconds of
+        // integration at that length planned 455 frames — forty-four seconds of
+        // shooting and stacking for a capture labelled "10 s".
+        val daylight = SceneMetering(exposureNs = 20_000_000L, iso = 67)
+        val plan = CapturePlanner.plan(mainCamera, CaptureMode.TEN_SECONDS, daylight)
+
+        assertTrue(
+            "planned ${plan.frameCount} frames; that is a minute of waiting",
+            plan.frameCount <= CapturePlanner.MAX_STACK_FRAMES,
+        )
+    }
+
+    @Test
+    fun `the frame cap never binds on a dark sky`() {
+        // The cap must be invisible where the app is actually meant to be used:
+        // thirty seconds of dark sky is 67 frames and must stay 67 frames.
+        val plan = CapturePlanner.plan(mainCamera, CaptureMode.THIRTY_SECONDS, meteredDarkSky)
+
+        assertEquals(67, plan.frameCount)
+        assertTrue(plan.plannedIntegrationMs >= 30_000L)
+    }
+
+    @Test
+    fun `a dark sky never triggers the bright-scene path`() {
+        CaptureMode.entries.forEach { mode ->
+            val plan = CapturePlanner.plan(mainCamera, mode, meteredDarkSky)
+            assertTrue(
+                "${mode.label} wrongly treated a dark sky as too bright",
+                plan.limitedBy != ExposureLimit.SCENE_BRIGHTNESS,
+            )
+            assertEquals(mainCamera.maxExposureNs, plan.subExposureNs)
+        }
+    }
+
+    @Test
     fun `single mode takes exactly one frame and indefinite never stops on its own`() {
         assertEquals(1, CapturePlanner.plan(mainCamera, CaptureMode.SINGLE, meteredDarkSky).frameCount)
         assertEquals(
